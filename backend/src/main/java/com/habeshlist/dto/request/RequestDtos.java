@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.UUID;
 
 public final class RequestDtos {
     private RequestDtos() {}
@@ -18,9 +19,15 @@ public final class RequestDtos {
             @NotBlank String lastName,
             @Email @NotBlank String email,
             String phone,
-            @NotBlank @Size(min = 6) String password,
-            String role // Optional: SENDER (default) or TRAVELER.
+            @NotBlank @Size(min = 12, max = 72) String password,
+            @NotBlank @Size(min = 48, max = 48) String invitationToken
     ) {}
+
+    public record CreateInvitationRequest(@Email @NotBlank @Size(max = 255) String email, @NotBlank String role) {}
+    public record InspectInvitationRequest(@NotBlank @Size(min = 48, max = 48) String token) {}
+    public record UpdateUserAccessRequest(@NotNull Boolean active) {}
+    public record ChangePasswordRequest(@NotBlank String currentPassword,
+            @NotBlank @Size(min = 12, max = 72) String newPassword) {}
 
     public record RecipientRequest(
             @NotBlank String name,
@@ -42,11 +49,17 @@ public final class RequestDtos {
             String pickupTimeWindow,
             String referralCode,
             java.util.UUID senderId, // Admin only: create on behalf of this sender
-            String guestFirstName, String guestLastName, String guestEmail, String guestPhone, // Guest checkout only
             com.habeshlist.entity.enums.PackageType packageType, // null = OTHER (priced per kg)
-            String photoDataUrl) {} // optional package picture as a data:image/... URL
+            String photoDataUrl,
+            @Valid java.util.List<@NotNull RecipientRequest> additionalRecipients,
+            @Size(max = 5) java.util.List<@NotBlank String> photoDataUrls) {}
 
      public record UpdatePaymentRequest(@NotNull com.habeshlist.entity.enums.PaymentStatus paymentStatus) {}
+
+     public record UpdatePhotoRequest(@NotBlank String photoDataUrl) {}
+
+     public record UpdatePhotosRequest(
+             @NotNull @Size(max = 5) java.util.List<@NotBlank String> photoDataUrls) {}
 
     public record UpdateStatusRequest(@NotBlank String status, String location, String description) {}
 
@@ -57,13 +70,13 @@ public final class RequestDtos {
             @NotNull LocalDate departureDate,
             LocalDate expectedArrivalDate,
             @NotNull @DecimalMin("0.1") BigDecimal totalLuggageCapacity,
-            @NotNull @Min(1) Integer numberOfLuggage,
+            @NotNull @Min(0) Integer numberOfLuggage,
             String notes) {}
 
     public record UpdateTripStatusRequest(@NotBlank String status) {}
 
     public record CreateLuggageRequest(
-            @NotNull java.util.UUID tripId,
+            java.util.UUID tripId,
             String luggageType,
             @NotNull @DecimalMin("0.1") BigDecimal capacityKg,
             String sealNumber,
@@ -72,6 +85,11 @@ public final class RequestDtos {
     public record UpdateLuggageStatusRequest(@NotBlank String status) {}
 
     public record AssignShipmentRequest(@NotNull java.util.UUID shipmentId) {}
+
+    public record AssignShipmentsRequest(
+            @NotEmpty @Size(max = 100) java.util.List<@NotNull UUID> shipmentIds) {}
+
+    public record AssignTripRequest(java.util.UUID tripId) {}
 
     public record CreatePickupRequest(
             @NotNull java.util.UUID shipmentId,
@@ -87,7 +105,7 @@ public final class RequestDtos {
             @NotBlank String lastName,
             @Email @NotBlank String email,
             String phone,
-            @NotBlank @Size(min = 6) String password,
+            @NotBlank @Size(min = 12, max = 72) String password,
             String country,
             String city,
             @DecimalMin("0.0") @DecimalMax("1.0") BigDecimal commissionRate) {}
@@ -101,7 +119,7 @@ public final class RequestDtos {
             @NotBlank String lastName,
             @Email @NotBlank String email,
             String phone,
-            @NotBlank @Size(min = 6) String password,
+            @NotBlank @Size(min = 12, max = 72) String password,
             @NotBlank String role) {}
 
     public record ScanRequest(@NotBlank String code, String action) {}

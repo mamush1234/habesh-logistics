@@ -23,6 +23,18 @@ public final class ApiDtos {
 
     public record AuthResponse(String token, long expiresInMs, UserDto user) {}
 
+    public record InvitationInfoDto(String email, Role role, Instant expiresAt) {}
+    public record CreatedInvitationDto(InvitationDto invitation, String token) {}
+    public record InvitationDeliveryDto(InvitationDto invitation, String token, String invitationUrl,
+                                        boolean emailSent, String deliveryMessage) {}
+    public record InvitationDto(UUID id, String email, Role role, Instant createdAt,
+                                Instant expiresAt, Instant usedAt, Instant revokedAt) {
+        public static InvitationDto from(Invitation invitation) {
+            return new InvitationDto(invitation.getId(), invitation.getEmail(), invitation.getRole(),
+                    invitation.getCreatedAt(), invitation.getExpiresAt(), invitation.getUsedAt(), invitation.getRevokedAt());
+        }
+    }
+
     public record RecipientDto(UUID id, String name, String phone, String city, String address, String notes) {
         public static RecipientDto from(Recipient r) {
             return new RecipientDto(r.getId(), r.getName(), r.getPhone(), r.getCity(), r.getAddress(), r.getNotes());
@@ -40,7 +52,8 @@ public final class ApiDtos {
             String status, UUID referringAgentId, UUID luggageId, String luggageNumber,
             UUID assignedAgentId, String assignedAgentName,
             UUID assignedTravelerId, String assignedTravelerName, boolean hasPhoto,
-            Instant createdAt, Instant updatedAt) {
+            UUID tripId, String tripNumber,
+            Instant createdAt, Instant updatedAt, List<RecipientDto> recipients, int photoCount) {
         public static ShipmentDto from(Shipment s) {
             return new ShipmentDto(
                 s.getId(), s.getTrackingNumber(),
@@ -62,7 +75,10 @@ public final class ApiDtos {
                 s.getAssignedTraveler() == null ? null : s.getAssignedTraveler().getId(),
                 s.getAssignedTraveler() == null ? null : s.getAssignedTraveler().getFirstName() + " " + s.getAssignedTraveler().getLastName(),
                 s.getPhotoData() != null && !s.getPhotoData().isBlank(),
-                s.getCreatedAt(), s.getUpdatedAt());
+                s.transportTrip() == null ? null : s.transportTrip().getId(),
+                s.transportTrip() == null ? null : s.transportTrip().getTripNumber(),
+                s.getCreatedAt(), s.getUpdatedAt(),
+                s.allRecipients().stream().map(RecipientDto::from).toList(), s.allPhotos().size());
         }
     }
 
@@ -94,11 +110,17 @@ public final class ApiDtos {
 
     public record ShipmentSummaryDto(
             UUID id, String trackingNumber, BigDecimal declaredWeightKg,
-            String destinationCity, String status) {
+            String destinationCity, String status, String senderName, boolean hasPhoto,
+            String recipientName, String recipientPhone, String description,
+            List<RecipientDto> recipients, int photoCount) {
         public static ShipmentSummaryDto from(Shipment s) {
             return new ShipmentSummaryDto(s.getId(), s.getTrackingNumber(),
                     s.getDeclaredWeightKg(), s.getDestinationCity(),
-                    s.getStatus() == null ? null : s.getStatus().name());
+                    s.getStatus() == null ? null : s.getStatus().name(),
+                    s.getSender().getFirstName() + " " + s.getSender().getLastName(),
+                    s.getPhotoData() != null && !s.getPhotoData().isBlank(),
+                    s.getRecipient().getName(), s.getRecipient().getPhone(), s.getDescription(),
+                    s.allRecipients().stream().map(RecipientDto::from).toList(), s.allPhotos().size());
         }
     }
 
@@ -109,7 +131,7 @@ public final class ApiDtos {
             BigDecimal totalLuggageCapacity, Integer numberOfLuggage,
             String status, String notes,
             BigDecimal assignedWeightKg, BigDecimal availableCapacityKg,
-            List<LuggageDto> luggage) {}
+            List<LuggageDto> luggage, List<ShipmentSummaryDto> directShipments) {}
 
     public record PickupDto(
             UUID id, UUID shipmentId, String trackingNumber,

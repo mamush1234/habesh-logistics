@@ -9,6 +9,7 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
   RECEIVED_AT_ALEXANDRIA:    { label: 'Received at Alexandria',  cls: 'badge-blue' },
   READY_FOR_CONSOLIDATION:   { label: 'Ready to Consolidate',    cls: 'badge-blue' },
   ASSIGNED_TO_LUGGAGE:       { label: 'Assigned to Luggage',     cls: 'badge-violet' },
+  ASSIGNED_TO_TRIP:          { label: 'Assigned to Trip',        cls: 'badge-violet' },
   HANDED_TO_TRAVELER:        { label: 'Handed to Traveler',      cls: 'badge-violet' },
   DEPARTED_US:               { label: 'Departed USA',            cls: 'badge-violet' },
   ARRIVED_ETHIOPIA:          { label: 'Arrived in Ethiopia',     cls: 'badge-blue' },

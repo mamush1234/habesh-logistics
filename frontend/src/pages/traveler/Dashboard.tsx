@@ -4,20 +4,22 @@ import { AssignedShipments } from '../../components/ShipmentStatusSelect';
 import { StatusBadge } from '../../components/StatusBadge';
 import { toast } from 'sonner';
 import { PlaneTakeoff, PlaneLanding, Luggage as LuggageIcon } from 'lucide-react';
+import { useAuth } from '../../auth/AuthContext';
 
 export function TravelerDashboard() {
+  const { user } = useAuth();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['trips'], queryFn: TripApi.list });
   const assigned = useQuery({ queryKey: ['shipments'], queryFn: ShipmentApi.list });
 
   const tripMut = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) => TripApi.updateStatus(id, status),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['trips'] }); toast.success('Trip updated'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['trips'] }); qc.invalidateQueries({ queryKey: ['shipments'] }); toast.success('Trip updated'); },
     onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
   });
   const lugMut = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) => LuggageApi.updateStatus(id, status),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['trips'] }); toast.success('Luggage updated'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['trips'] }); qc.invalidateQueries({ queryKey: ['shipments'] }); toast.success('Luggage updated'); },
     onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed'),
   });
 
@@ -54,6 +56,15 @@ export function TravelerDashboard() {
             </div>
 
             <div className="space-y-3">
+              {t.directShipments.length > 0 && <div className="rounded-xl ring-1 ring-ink-300 p-4">
+                <h2 className="font-semibold">Direct packages (without luggage)</h2>
+                <ul className="mt-3 text-sm divide-y divide-ink-300/50">
+                  {t.directShipments.map(s => <li className="py-1.5 flex justify-between" key={s.id}>
+                    <span className="font-mono">{s.trackingNumber}</span>
+                    <span>{s.declaredWeightKg} kg · {s.destinationCity}</span>
+                  </li>)}
+                </ul>
+              </div>}
               {t.luggage.map(l => (
                 <div className="rounded-xl ring-1 ring-ink-300 p-4" key={l.id} data-testid={`luggage-${l.luggageNumber}`}>
                   <div className="flex items-start justify-between gap-3">
@@ -75,18 +86,19 @@ export function TravelerDashboard() {
                     ))}
                     {l.shipments.length === 0 && <li className="py-1.5 text-ink-500">No shipments assigned.</li>}
                   </ul>
-                  <div className="flex flex-wrap gap-2 mt-3">
+                  {(user?.role === 'ADMIN' || t.travelerId === user?.id || l.assignedTravelerId === user?.id)
+                    && <div className="flex flex-wrap gap-2 mt-3">
                     <button className="btn btn-ghost text-xs" onClick={() => lugMut.mutate({ id: l.id, status: 'HANDED_TO_TRAVELER' })}>Mark received</button>
                     <button className="btn btn-ghost text-xs" onClick={() => lugMut.mutate({ id: l.id, status: 'SEALED' })}>Sealed</button>
-                  </div>
+                  </div>}
                 </div>
               ))}
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            {(user?.role === 'ADMIN' || t.travelerId === user?.id) && <div className="flex flex-wrap gap-2">
               <button className="btn btn-primary" onClick={() => tripMut.mutate({ id: t.id, status: 'DEPARTED' })} data-testid={`depart-${t.tripNumber}`}>Mark departed</button>
               <button className="btn btn-brand" onClick={() => tripMut.mutate({ id: t.id, status: 'ARRIVED' })} data-testid={`arrive-${t.tripNumber}`}>Mark arrived</button>
-            </div>
+            </div>}
           </div>
         ))}
       </div>

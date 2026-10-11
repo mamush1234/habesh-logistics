@@ -33,6 +33,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     }
 
     @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return "POST".equals(request.getMethod()) && List.of(
+                "/api/auth/login", "/api/auth/register", "/api/auth/invitation")
+                .contains(request.getRequestURI().substring(request.getContextPath().length()));
+    }
+
+    @Override
     protected void doFilterInternal(@NonNull HttpServletRequest req,
                                     @NonNull HttpServletResponse res,
                                     @NonNull FilterChain chain) throws ServletException, IOException {
@@ -42,19 +49,25 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             try {
                 Claims claims = jwtService.parse(token);
                 UUID userId = UUID.fromString(claims.getSubject());
-                String role = claims.get("role", String.class);
                 Optional<User> userOpt = userRepository.findById(userId);
                 if (userOpt.isPresent() && userOpt.get().isActive() && SecurityContextHolder.getContext().getAuthentication() == null) {
                     User user = userOpt.get();
+                    Integer version = claims.get("credentialVersion", Integer.class);
+                    if ((version == null ? 0 : version) != user.getCredentialVersion()) {
+                        res.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Session revoked. Sign in again.");
+                        return;
+                    }
                     AuthPrincipal principal = new AuthPrincipal(user.getId(), user.getEmail(), user.getRole());
                     UsernamePasswordAuthenticationToken auth =
                             new UsernamePasswordAuthenticationToken(principal, null,
-                                    List.of(new SimpleGrantedAuthority("ROLE_" + role)));
+                                    List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name())));
                     auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(req));
                     SecurityContextHolder.getContext().setAuthentication(auth);
                 }
-            } catch (JwtException | IllegalArgumentException ignored) {
-                // invalid token; continue unauthenticated
+            } catch (JwtException | IllegalArgumentException ex) {
+                SecurityContextHolder.clearContext();
+                res.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid or expired authentication");
+                return;
             }
         }
         chain.doFilter(req, res);

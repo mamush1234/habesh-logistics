@@ -36,12 +36,23 @@ public class DataSeeder {
     @Value("${app.pricing.default-commission-rate}")
     private BigDecimal defaultCommission;
 
+    @Value("${app.demo-data-enabled:false}")
+    private boolean demoDataEnabled;
+    @Value("${app.initial-admin.email:}")
+    private String initialAdminEmail;
+    @Value("${app.initial-admin.password:}")
+    private String initialAdminPassword;
+    private final org.springframework.core.env.Environment environment;
+    private final org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
+
     public DataSeeder(AuthService authService, UserRepository users, ShipmentService shipmentService,
                       TripService tripService, ShipmentRepository shipments, TripRepository trips,
                       LuggageRepository luggageRepo, LuggageService luggageService,
                       RecipientRepository recipients, AgentProfileRepository agentProfiles,
                       CommissionRepository commissionRepo,
-                      TrackingEventService trackingEventService) {
+                      TrackingEventService trackingEventService,
+                      org.springframework.core.env.Environment environment,
+                      org.springframework.security.crypto.password.PasswordEncoder passwordEncoder) {
         this.authService = authService;
         this.users = users;
         this.shipmentService = shipmentService;
@@ -54,6 +65,8 @@ public class DataSeeder {
         this.agentProfiles = agentProfiles;
         this.commissionRepo = commissionRepo;
         this.trackingEventService = trackingEventService;
+        this.environment = environment;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -62,6 +75,24 @@ public class DataSeeder {
         shipmentService.initTrackingSequence();
         tripService.initSequences();
 
+        if (!demoDataEnabled) {
+            List<String> demoPasswords = List.of("Admin@123", "Traveler@123", "Agent@123", "Sender@123");
+            boolean unsafe = users.findAll().stream().filter(User::isActive).anyMatch(user ->
+                    demoPasswords.stream().anyMatch(password -> passwordEncoder.matches(password, user.getPasswordHash())));
+            if (unsafe) throw new IllegalStateException("Active demo passwords detected. Change them or disable these accounts before production deployment.");
+            if (users.findAllByRole(Role.ADMIN).stream().noneMatch(User::isActive)) {
+                if (initialAdminEmail.isBlank() || !initialAdminEmail.contains("@")) {
+                    throw new IllegalStateException("INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD are required for first startup");
+                }
+                AuthService.validateNewPassword(initialAdminPassword);
+                if (demoPasswords.contains(initialAdminPassword)) throw new IllegalStateException("Use a unique initial administrator password");
+                authService.createPrivilegedUser("Admin", "User", initialAdminEmail.trim(), null, initialAdminPassword, Role.ADMIN);
+            }
+            return;
+        }
+        if (!environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "test"))) {
+            throw new IllegalStateException("Demo data is allowed only in the dev or test profile");
+        }
         if (users.count() > 0) return;
 
         User admin = authService.createPrivilegedUser("Admin", "User", "admin@habeshlist.com",

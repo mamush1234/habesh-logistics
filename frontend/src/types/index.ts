@@ -17,6 +17,28 @@ export interface AuthResponse {
   user: User;
 }
 
+export interface RegisterRequest {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  password: string;
+  invitationToken: string;
+}
+
+export interface InvitationInfo {
+  email: string;
+  role: 'SENDER' | 'TRAVELER' | 'AGENT';
+  expiresAt: string;
+}
+
+export interface Invitation extends InvitationInfo {
+  id: string;
+  createdAt: string;
+  usedAt: string | null;
+  revokedAt: string | null;
+}
+
 export interface Recipient {
   id: string;
   name: string;
@@ -32,6 +54,8 @@ export interface Shipment {
   senderId: string;
   senderName: string;
   recipient: Recipient;
+  recipients: Recipient[];
+  photoCount: number;
   destinationCountry: string;
   destinationCity: string;
   description?: string;
@@ -51,6 +75,8 @@ export interface Shipment {
   referringAgentId?: string;
   luggageId?: string;
   luggageNumber?: string;
+  tripId?: string | null;
+  tripNumber?: string | null;
   assignedAgentId?: string;
   assignedAgentName?: string;
   assignedTravelerId?: string;
@@ -85,6 +111,13 @@ export interface ShipmentSummary {
   declaredWeightKg: string;
   destinationCity: string;
   status: string;
+  senderName: string;
+  hasPhoto: boolean;
+  recipientName: string;
+  recipientPhone: string;
+  recipients: Recipient[];
+  photoCount: number;
+  description?: string | null;
 }
 
 export interface Luggage {
@@ -94,8 +127,8 @@ export interface Luggage {
   assignedTravelerId?: string;
   assignedTravelerName?: string;
   luggageNumber: string;
-  tripId: string;
-  tripNumber: string;
+  tripId: string | null;
+  tripNumber: string | null;
   luggageType?: string;
   capacityKg: string;
   assignedWeightKg: string;
@@ -123,6 +156,7 @@ export interface Trip {
   assignedWeightKg: string;
   availableCapacityKg: string;
   luggage: Luggage[];
+  directShipments: ShipmentSummary[];
 }
 
 export interface ReferralStats {

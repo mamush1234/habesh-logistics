@@ -12,6 +12,7 @@ import com.habeshlist.repository.ShipmentRepository;
 import com.habeshlist.repository.UserRepository;
 import com.habeshlist.security.AuthPrincipal;
 import com.habeshlist.security.SecurityUtils;
+import com.habeshlist.security.ShipmentAccess;
 import com.habeshlist.service.DtoMapper;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -30,14 +31,17 @@ public class ScanController {
     private final ScanAuditRepository audits;
     private final UserRepository users;
     private final DtoMapper mapper;
+    private final ShipmentAccess access;
 
     public ScanController(ShipmentRepository shipments, LuggageRepository luggageRepo,
-                          ScanAuditRepository audits, UserRepository users, DtoMapper mapper) {
+                          ScanAuditRepository audits, UserRepository users, DtoMapper mapper,
+                          ShipmentAccess access) {
         this.shipments = shipments;
         this.luggageRepo = luggageRepo;
         this.audits = audits;
         this.users = users;
         this.mapper = mapper;
+        this.access = access;
     }
 
     @PostMapping
@@ -48,6 +52,7 @@ public class ScanController {
         if (code.startsWith("HL-")) {
             Shipment s = shipments.findByTrackingNumber(code)
                     .orElseThrow(() -> new com.habeshlist.exception.NotFoundException("Shipment not found: " + code));
+            ShipmentAccess.assertCanRead(p, s);
             audits.save(ScanAudit.builder().entityType("SHIPMENT").entityIdentifier(code)
                     .action(req.action()).performedBy(performed).build());
             return ResponseEntity.ok(Map.of("type", "SHIPMENT", "shipment", ApiDtos.ShipmentDto.from(s)));
@@ -55,6 +60,7 @@ public class ScanController {
         if (code.startsWith("LUG-")) {
             Luggage l = luggageRepo.findByLuggageNumber(code)
                     .orElseThrow(() -> new com.habeshlist.exception.NotFoundException("Luggage not found: " + code));
+            access.assertCanRead(p, l);
             audits.save(ScanAudit.builder().entityType("LUGGAGE").entityIdentifier(code)
                     .action(req.action()).performedBy(performed).build());
             return ResponseEntity.ok(Map.of("type", "LUGGAGE", "luggage", mapper.toLuggageDto(l)));

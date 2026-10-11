@@ -9,6 +9,7 @@ public enum ShipmentStatus {
     RECEIVED_AT_ALEXANDRIA,
     READY_FOR_CONSOLIDATION,
     ASSIGNED_TO_LUGGAGE,
+    ASSIGNED_TO_TRIP,
     HANDED_TO_TRAVELER,
     DEPARTED_US,
     ARRIVED_ETHIOPIA,
@@ -16,5 +17,10 @@ public enum ShipmentStatus {
     READY_FOR_RECIPIENT,
     DELIVERED,
     CANCELLED,
-    ON_HOLD
+    ON_HOLD;
+
+    public boolean canAssignToTransport() {
+        return this == CREATED || this == READY_FOR_PICKUP || this == PICKED_UP
+                || this == RECEIVED_AT_ALEXANDRIA || this == READY_FOR_CONSOLIDATION;
+    }
 }

@@ -8,10 +8,12 @@ import com.habeshlist.exception.BadRequestException;
 import com.habeshlist.exception.NotFoundException;
 import com.habeshlist.repository.*;
 import com.habeshlist.security.AuthPrincipal;
+import com.habeshlist.security.ShipmentAccess;
 import com.habeshlist.util.CodeGenerator;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -29,7 +31,6 @@ public class ShipmentService {
     private final PickupRepository pickups;
     private final CommissionRepository commissions;
     private final TrackingEventService trackingEventService;
-    private final AuthService authService;
 
     @Value("${app.pricing.default-rate-per-kg}")
     private BigDecimal defaultRate;
@@ -45,7 +46,7 @@ public class ShipmentService {
     public ShipmentService(ShipmentRepository shipments, RecipientRepository recipients,
                            UserRepository users, AgentProfileRepository agentProfiles,
                            PickupRepository pickups, CommissionRepository commissions,
-                           TrackingEventService trackingEventService, AuthService authService) {
+                           TrackingEventService trackingEventService) {
         this.shipments = shipments;
         this.recipients = recipients;
         this.users = users;
@@ -53,7 +54,6 @@ public class ShipmentService {
         this.pickups = pickups;
         this.commissions = commissions;
         this.trackingEventService = trackingEventService;
-        this.authService = authService;
     }
 
     /** Initialize tracking sequence based on existing shipments; call at app startup. */
@@ -82,41 +82,18 @@ public class ShipmentService {
         return createFor(sender, req);
     }
 
-    /** Guest checkout: attaches the shipment to a sender account found or created by email. */
-    @Transactional
-    public Shipment createGuestShipment(RequestDtos.CreateShipmentRequest req) {
-        if (isBlank(req.guestFirstName()) || isBlank(req.guestLastName())
-                || isBlank(req.guestEmail()) || isBlank(req.guestPhone())) {
-            throw new BadRequestException("Name, email and phone are required");
-        }
-        User sender = users.findByEmailIgnoreCase(req.guestEmail().trim()).orElse(null);
-        if (sender == null) {
-            sender = authService.createPrivilegedUser(req.guestFirstName().trim(), req.guestLastName().trim(),
-                    req.guestEmail().trim(), req.guestPhone().trim(), UUID.randomUUID().toString(), Role.SENDER);
-        } else if (sender.getRole() != Role.SENDER) {
-            throw new BadRequestException("This email belongs to an existing account. Please log in.");
-        }
-        // Guests cannot choose their own rate or act on behalf of another sender
-        RequestDtos.CreateShipmentRequest safe = new RequestDtos.CreateShipmentRequest(
-                req.recipient(), req.destinationCountry(), req.destinationCity(), req.description(),
-                req.declaredWeightKg(), null, req.pickupMethod(), req.pickupAddress(),
-                req.pickupRequestedDate(), req.pickupTimeWindow(), req.referralCode(),
-                null, null, null, null, null, req.packageType(), req.photoDataUrl());
-        return createFor(sender, safe);
-    }
-
     private static boolean isBlank(String s) { return s == null || s.isBlank(); }
 
     private Shipment createFor(User sender, RequestDtos.CreateShipmentRequest req) {
-        String photo = req.photoDataUrl();
-        if (photo != null && photo.isBlank()) photo = null;
-        if (photo != null && (!photo.startsWith("data:image/") || photo.length() > 3_000_000)) {
-            throw new BadRequestException("Photo must be an image under about 2 MB");
+        if (req.photoDataUrl() != null && !req.photoDataUrl().isBlank() && req.photoDataUrls() != null) {
+            throw new BadRequestException("Provide photoDataUrls or photoDataUrl, not both");
         }
-        Recipient r = recipients.save(Recipient.builder()
-                .name(req.recipient().name()).phone(req.recipient().phone())
-                .city(req.recipient().city()).address(req.recipient().address())
-                .notes(req.recipient().notes()).build());
+        List<String> photos = req.photoDataUrls() == null
+                ? (validatePhoto(req.photoDataUrl()) == null ? List.of() : List.of(req.photoDataUrl()))
+                : validatePhotos(req.photoDataUrls());
+        Recipient r = saveRecipient(req.recipient());
+        List<Recipient> additionalRecipients = req.additionalRecipients() == null ? List.of()
+                : req.additionalRecipients().stream().map(this::saveRecipient).toList();
 
         PackageType type = req.packageType() == null ? PackageType.OTHER : req.packageType();
         BigDecimal rate = req.ratePerKg() == null ? defaultRate : req.ratePerKg();
@@ -146,7 +123,6 @@ public class ShipmentService {
                 .description(req.description())
                 .declaredWeightKg(req.declaredWeightKg())
                 .packageType(type)
-                .photoData(photo)
                 .ratePerKg(rate)
                 .shippingFee(shippingFee)
                 .pickupFee(pickupFee)
@@ -159,6 +135,8 @@ public class ShipmentService {
                 .referringAgent(referringAgent)
                 .assignedAgent(referringAgent)
                 .build();
+        s.getAdditionalRecipients().addAll(additionalRecipients);
+        s.replacePhotos(photos);
         shipments.save(s);
 
         trackingEventService.record(s, ShipmentStatus.CREATED, "SHIPMENT_CREATED",
@@ -198,6 +176,57 @@ public class ShipmentService {
     }
 
     @Transactional
+    public Shipment updatePhoto(UUID shipmentId, String photoDataUrl, AuthPrincipal principal) {
+        Shipment s = editablePhotos(shipmentId, principal);
+        String photo = validatePhoto(photoDataUrl);
+        if (photo == null) throw new BadRequestException("A package picture is required");
+        s.setPhotoData(photo);
+        return shipments.save(s);
+    }
+
+    @Transactional
+    public Shipment updatePhotos(UUID shipmentId, List<String> photoDataUrls, AuthPrincipal principal) {
+        Shipment s = editablePhotos(shipmentId, principal);
+        s.replacePhotos(validatePhotos(photoDataUrls));
+        return shipments.save(s);
+    }
+
+    private Shipment editablePhotos(UUID shipmentId, AuthPrincipal principal) {
+        Shipment s = shipments.findForUpdate(shipmentId).orElseThrow(() -> new NotFoundException("Shipment not found"));
+        if (principal.role() != Role.ADMIN && !(principal.role() == Role.SENDER
+                && s.getSender().getId().equals(principal.userId()))) {
+            throw new AccessDeniedException("Only an admin or the package's sender can update its picture");
+        }
+        return s;
+    }
+
+    private Recipient saveRecipient(RequestDtos.RecipientRequest req) {
+        if (req == null || isBlank(req.name()) || isBlank(req.phone()) || isBlank(req.city())) {
+            throw new BadRequestException("Each recipient requires a name, phone and city");
+        }
+        return recipients.save(Recipient.builder().name(req.name()).phone(req.phone())
+                .city(req.city()).address(req.address()).notes(req.notes()).build());
+    }
+
+    private static List<String> validatePhotos(List<String> photos) {
+        if (photos == null || photos.size() > 5) {
+            throw new BadRequestException("A package can have up to 5 pictures");
+        }
+        for (String photo : photos) {
+            if (validatePhoto(photo) == null) throw new BadRequestException("Each picture must be a nonempty image");
+        }
+        return photos;
+    }
+
+    private static String validatePhoto(String photo) {
+        if (photo == null || photo.isBlank()) return null;
+        if (!photo.startsWith("data:image/") || photo.length() > 3_000_000) {
+            throw new BadRequestException("Photo must be an image under about 2 MB");
+        }
+        return photo;
+    }
+
+    @Transactional
     public Shipment updatePayment(UUID shipmentId, PaymentStatus status) {
         Shipment s = getById(shipmentId);
         s.setPaymentStatus(status);
@@ -209,8 +238,8 @@ public class ShipmentService {
     @Transactional
     public void remove(UUID shipmentId) {
         Shipment s = getById(shipmentId);
-        if (s.getLuggage() != null) {
-            throw new BadRequestException("Shipment is already assigned to luggage; unassign it first");
+        if (s.getLuggage() != null || s.getTrip() != null) {
+            throw new BadRequestException("Shipment is already assigned to luggage or a trip; unassign it first");
         }
         shipments.delete(s);
     }
@@ -266,13 +295,11 @@ public class ShipmentService {
         return switch (p.role()) {
             case ADMIN -> shipments.findAll();
             case SENDER -> shipments.findAllBySenderId(p.userId());
-            case AGENT -> java.util.stream.Stream.concat(
-                            shipments.findAllByReferringAgentId(p.userId()).stream(),
-                            shipments.findAllByAssignedAgentId(p.userId()).stream())
-                    .distinct().toList();
+            case AGENT -> shipments.findAll().stream()
+                    .filter(s -> ShipmentAccess.canRead(p, s)).toList();
             case TRAVELER -> java.util.stream.Stream.concat(
                             shipments.findAll().stream()
-                                    .filter(s -> s.getLuggage() != null && s.getLuggage().getTrip().getTraveler().getId().equals(p.userId())),
+                                    .filter(s -> s.isCarriedBy(p.userId())),
                             shipments.findAllByAssignedTravelerId(p.userId()).stream())
                     .distinct().toList();
         };

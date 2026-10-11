@@ -56,7 +56,7 @@ class HabeshLogisticsIntegrationTest {
 
     @Test
     void trackingRequiresLoginAndOwnership() throws Exception {
-        mvc.perform(get("/api/shipments/tracking/HL-000101")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/shipments/tracking/HL-000101")).andExpect(status().isUnauthorized());
         String t = login("sender@example.com", "Sender@123");
         MvcResult r = mvc.perform(get("/api/shipments/tracking/HL-000101").header("Authorization", "Bearer " + t))
                 .andExpect(status().isOk())

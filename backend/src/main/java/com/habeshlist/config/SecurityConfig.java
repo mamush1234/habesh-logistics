@@ -43,17 +43,11 @@ public class SecurityConfig {
                     new org.springframework.security.web.authentication.HttpStatusEntryPoint(
                             org.springframework.http.HttpStatus.UNAUTHORIZED)))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers(
-                        "/api/auth/**",
-                        "/api/shipments/guest",
-                        "/api/qr/tracking/**",
-                        "/api/public/**",
-                        "/api-docs/**",
-                        "/swagger-ui/**",
-                        "/swagger-ui.html",
-                        "/actuator/health",
-                        "/error"
-                ).permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.POST,
+                        "/api/auth/login", "/api/auth/register", "/api/auth/invitation").permitAll()
+                .requestMatchers("/error").permitAll()
+                .requestMatchers("/api/shipments/guest").denyAll()
+                .requestMatchers("/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").hasRole("ADMIN")
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

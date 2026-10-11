@@ -11,6 +11,8 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "shipments", indexes = {
@@ -40,6 +42,21 @@ public class Shipment {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "recipient_id")
     private Recipient recipient;
+
+    @ManyToMany
+    @JoinTable(name = "shipment_additional_recipients",
+            joinColumns = @JoinColumn(name = "shipment_id"),
+            inverseJoinColumns = @JoinColumn(name = "recipient_id"))
+    @OrderColumn(name = "recipient_order")
+    @Builder.Default
+    private List<Recipient> additionalRecipients = new ArrayList<>();
+
+    public List<Recipient> allRecipients() {
+        List<Recipient> result = new ArrayList<>();
+        result.add(recipient);
+        result.addAll(additionalRecipients);
+        return result;
+    }
 
     @Column(nullable = false)
     private String destinationCountry;
@@ -85,6 +102,26 @@ public class Shipment {
     @Column(columnDefinition = "text")
     private String photoData;
 
+    @ElementCollection
+    @CollectionTable(name = "shipment_additional_photos", joinColumns = @JoinColumn(name = "shipment_id"))
+    @OrderColumn(name = "photo_order")
+    @Column(name = "photo_data", columnDefinition = "text", nullable = false)
+    @Builder.Default
+    private List<String> additionalPhotos = new ArrayList<>();
+
+    public List<String> allPhotos() {
+        List<String> result = new ArrayList<>();
+        if (photoData != null && !photoData.isBlank()) result.add(photoData);
+        result.addAll(additionalPhotos);
+        return result;
+    }
+
+    public void replacePhotos(List<String> photos) {
+        photoData = photos.isEmpty() ? null : photos.get(0);
+        additionalPhotos.clear();
+        if (photos.size() > 1) additionalPhotos.addAll(photos.subList(1, photos.size()));
+    }
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "referring_agent_id")
     private User referringAgent;
@@ -100,6 +137,22 @@ public class Shipment {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "luggage_id")
     private Luggage luggage;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "trip_id")
+    private Trip trip;
+
+    public Trip transportTrip() {
+        return luggage == null ? trip : luggage.getTrip();
+    }
+
+    public boolean isCarriedBy(UUID travelerId) {
+        Trip transport = transportTrip();
+        return (assignedTraveler != null && assignedTraveler.getId().equals(travelerId))
+                || (transport != null && transport.getTraveler().getId().equals(travelerId))
+                || (luggage != null && luggage.getAssignedTraveler() != null
+                    && luggage.getAssignedTraveler().getId().equals(travelerId));
+    }
 
     @CreatedDate @Column(updatable = false)
     private Instant createdAt;

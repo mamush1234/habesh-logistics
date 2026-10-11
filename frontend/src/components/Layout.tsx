@@ -8,6 +8,7 @@ const navItems = [
   { to: '/', label: 'Home', public: true },
   { to: '/send', label: 'Send Package', public: true },
   { to: '/track', label: 'Track', public: true },
+  { to: '/account', label: 'Account', public: true },
   { to: '/traveler', label: 'Traveler', roles: ['TRAVELER', 'ADMIN'] },
   { to: '/agent', label: 'Agent', roles: ['AGENT', 'ADMIN'] },
   { to: '/admin', label: 'Admin', roles: ['ADMIN'] },
@@ -18,7 +19,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
 
-  const visible = navItems.filter(i => i.public || (user && i.roles?.includes(user.role)));
+  const visible = navItems.filter(i => user && (i.public || i.roles?.includes(user.role)))
+    .filter(i => i.to !== '/send' || user?.role === 'ADMIN' || user?.role === 'SENDER');
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -60,7 +62,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             ) : (
               <>
                 <Link to="/login" className="btn btn-ghost" data-testid="login-link">Login</Link>
-                <Link to="/register" className="btn btn-brand hidden sm:inline-flex" data-testid="register-link">Sign up</Link>
               </>
             )}
             <button className="md:hidden btn btn-ghost !px-2" onClick={() => setOpen(!open)} data-testid="menu-toggle">
@@ -91,7 +92,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <footer className="border-t border-ink-300/60 bg-white">
         <div className="max-w-7xl mx-auto px-4 py-6 text-sm text-ink-500 flex flex-wrap gap-2 items-center justify-between">
           <span>© {new Date().getFullYear()} Habesh Logistics</span>
-          <span>Sender → Shipment → Luggage → Trip → Traveler</span>
+          {user && <span>Sender → Shipment → Luggage → Trip → Traveler</span>}
         </div>
       </footer>
     </div>

@@ -41,6 +41,7 @@ public class AgentController {
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiDtos.UserDto> create(@Valid @RequestBody RequestDtos.CreateAgentRequest req) {
+        AuthService.validateNewPassword(req.password());
         User u = authService.createPrivilegedUser(req.firstName(), req.lastName(), req.email(),
                 req.phone(), req.password(), Role.AGENT);
         AgentProfile ap = agentProfiles.findById(u.getId()).orElseThrow();

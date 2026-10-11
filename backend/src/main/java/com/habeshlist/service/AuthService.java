@@ -24,57 +24,54 @@ public class AuthService {
     private final AgentProfileRepository agentProfiles;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final com.habeshlist.security.LoginAttempts loginAttempts;
 
     public AuthService(UserRepository users, SenderProfileRepository senderProfiles,
                        TravelerProfileRepository travelerProfiles, AgentProfileRepository agentProfiles,
-                       PasswordEncoder passwordEncoder, JwtService jwtService) {
+                       PasswordEncoder passwordEncoder, JwtService jwtService,
+                       com.habeshlist.security.LoginAttempts loginAttempts) {
         this.users = users;
         this.senderProfiles = senderProfiles;
         this.travelerProfiles = travelerProfiles;
         this.agentProfiles = agentProfiles;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
-    }
-
-    @Transactional
-    public ApiDtos.AuthResponse register(RequestDtos.RegisterRequest req) {
-        if (users.existsByEmailIgnoreCase(req.email())) {
-            throw new BadRequestException("Email already registered");
-        }
-        // Public registration allows SENDER or TRAVELER only; ADMIN/AGENT are created by admins
-        Role role = Role.SENDER;
-        if (req.role() != null && !req.role().isBlank()) {
-            try { role = Role.valueOf(req.role().trim().toUpperCase()); }
-            catch (IllegalArgumentException e) { throw new BadRequestException("Invalid category"); }
-            if (role != Role.SENDER && role != Role.TRAVELER) {
-                throw new BadRequestException("Category must be SENDER or TRAVELER");
-            }
-        }
-        User u = User.builder()
-                .firstName(req.firstName())
-                .lastName(req.lastName())
-                .email(req.email().toLowerCase())
-                .phone(req.phone())
-                .passwordHash(passwordEncoder.encode(req.password()))
-                .role(role)
-                .active(true)
-                .build();
-        users.save(u);
-        if (role == Role.TRAVELER) {
-            travelerProfiles.save(TravelerProfile.builder().user(u).build());
-        } else {
-            senderProfiles.save(SenderProfile.builder().user(u).build());
-        }
-        return new ApiDtos.AuthResponse(jwtService.generateToken(u), jwtService.getExpirationMs(), ApiDtos.UserDto.from(u));
+        this.loginAttempts = loginAttempts;
     }
 
     public ApiDtos.AuthResponse login(RequestDtos.LoginRequest req) {
-        User u = users.findByEmailIgnoreCase(req.email())
-                .orElseThrow(() -> new BadCredentialsException("Invalid credentials"));
+        User u = users.findByEmailIgnoreCase(req.email().trim()).orElse(null);
+        if (u == null) throw new BadCredentialsException("Invalid credentials");
+        loginAttempts.check(u.getEmail());
         if (!u.isActive() || !passwordEncoder.matches(req.password(), u.getPasswordHash())) {
             throw new BadCredentialsException("Invalid credentials");
         }
-        return new ApiDtos.AuthResponse(jwtService.generateToken(u), jwtService.getExpirationMs(), ApiDtos.UserDto.from(u));
+        loginAttempts.succeeded(req.email());
+        return response(u);
+    }
+
+    public ApiDtos.AuthResponse response(User user) {
+        return new ApiDtos.AuthResponse(jwtService.generateToken(user), jwtService.getExpirationMs(), ApiDtos.UserDto.from(user));
+    }
+
+    public static void validateNewPassword(String password) {
+        if (password == null || password.length() < 12
+                || password.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 72) {
+            throw new BadRequestException("Password must be at least 12 characters and at most 72 UTF-8 bytes");
+        }
+
+    }
+
+    @Transactional
+    public void changePassword(java.util.UUID id, RequestDtos.ChangePasswordRequest req) {
+        User user = users.findForUpdate(id)
+                .orElseThrow(() -> new com.habeshlist.exception.NotFoundException("User not found"));
+        if (!passwordEncoder.matches(req.currentPassword(), user.getPasswordHash())) {
+            throw new BadCredentialsException("Invalid credentials");
+        }
+        validateNewPassword(req.newPassword());
+        user.setPasswordHash(passwordEncoder.encode(req.newPassword()));
+        user.setCredentialVersion(user.getCredentialVersion() + 1);
     }
 
     @Transactional

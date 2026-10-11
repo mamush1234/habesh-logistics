@@ -7,6 +7,7 @@ import com.habeshlist.exception.BadRequestException;
 import com.habeshlist.exception.NotFoundException;
 import com.habeshlist.repository.*;
 import com.habeshlist.security.AuthPrincipal;
+import com.habeshlist.security.ShipmentAccess;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,17 +26,20 @@ public class TripService {
     private final LuggageRepository luggage;
     private final ShipmentRepository shipments;
     private final TrackingEventService trackingEventService;
+    private final ShipmentAccess access;
 
     private static final AtomicInteger TRIP_SEQ = new AtomicInteger(44);
     private static final AtomicInteger LUG_SEQ = new AtomicInteger(0);
 
     public TripService(TripRepository trips, UserRepository users, LuggageRepository luggage,
-                       ShipmentRepository shipments, TrackingEventService trackingEventService) {
+                       ShipmentRepository shipments, TrackingEventService trackingEventService,
+                       ShipmentAccess access) {
         this.trips = trips;
         this.users = users;
         this.luggage = luggage;
         this.shipments = shipments;
         this.trackingEventService = trackingEventService;
+        this.access = access;
     }
 
     public synchronized void initSequences() {
@@ -70,7 +74,7 @@ public class TripService {
                 .build();
         trips.save(t);
         // Pre-create luggage units
-        BigDecimal per = req.totalLuggageCapacity()
+        BigDecimal per = req.numberOfLuggage() == 0 ? BigDecimal.ZERO : req.totalLuggageCapacity()
                 .divide(BigDecimal.valueOf(req.numberOfLuggage()), 2, java.math.RoundingMode.HALF_UP);
         for (int i = 0; i < req.numberOfLuggage(); i++) {
             Luggage l = Luggage.builder()
@@ -89,42 +93,108 @@ public class TripService {
         return trips.findById(id).orElseThrow(() -> new NotFoundException("Trip not found"));
     }
 
+    public Trip lockForAssignment(UUID id) {
+        Trip t = trips.findForUpdate(id).orElseThrow(() -> new NotFoundException("Trip not found"));
+        assertCanAssign(t);
+        return t;
+    }
+
+    public void assertCanAssign(Trip t) {
+        if (t.getStatus() != TripStatus.OPEN && t.getStatus() != TripStatus.FILLING
+                && t.getStatus() != TripStatus.READY) {
+            throw new BadRequestException("Trip is no longer open for assignment");
+        }
+    }
+
+    public void checkCapacity(Trip t, BigDecimal additionalWeight) {
+        BigDecimal assigned = shipments.findAllOnTrip(t.getId()).stream()
+                .map(s -> s.getDeclaredWeightKg() == null ? BigDecimal.ZERO : s.getDeclaredWeightKg())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (assigned.add(additionalWeight).compareTo(t.getTotalLuggageCapacity()) > 0) {
+            throw new BadRequestException("Trip capacity exceeded. Available: "
+                    + t.getTotalLuggageCapacity().subtract(assigned) + " kg");
+        }
+    }
+
+    public static BigDecimal assignmentWeight(Shipment s) {
+        if (s.getDeclaredWeightKg() == null || s.getDeclaredWeightKg().signum() <= 0) {
+            throw new BadRequestException("Package must have a positive declared weight before assignment");
+        }
+        return s.getDeclaredWeightKg();
+    }
+
+    @Transactional
+    public Shipment assignShipment(UUID shipmentId, UUID tripId, User performedBy) {
+        Shipment existing = shipments.findById(shipmentId)
+                .orElseThrow(() -> new NotFoundException("Shipment not found"));
+        // Lock the trip before its packages so capacity checks are serialized.
+        UUID lockId = existing.getTrip() == null ? tripId : existing.getTrip().getId();
+        Trip t = lockId == null ? null : lockForAssignment(lockId);
+        Shipment s = shipments.findForUpdate(shipmentId)
+                .orElseThrow(() -> new NotFoundException("Shipment not found"));
+        if (s.getLuggage() != null) {
+            throw new BadRequestException("Remove the package from luggage before assigning it directly to a trip");
+        }
+        if (tripId == null) {
+            if (s.getTrip() == null) return s;
+            trackingEventService.record(s, ShipmentStatus.READY_FOR_CONSOLIDATION, "UNASSIGNED_FROM_TRIP",
+                    "Package removed from trip", "Alexandria, VA", performedBy);
+            s.setTrip(null);
+            s.setStatus(ShipmentStatus.READY_FOR_CONSOLIDATION);
+            shipments.save(s);
+            return s;
+        }
+        if (s.getTrip() != null) {
+            if (s.getTrip().getId().equals(tripId)) return s;
+            throw new BadRequestException("Remove the package from its current trip before reassigning");
+        }
+        if (!s.getStatus().canAssignToTransport()) {
+            throw new BadRequestException("Package status is not eligible for assignment");
+        }
+        if (t == null || !t.getId().equals(tripId)) {
+            throw new BadRequestException("Package assignment changed; refresh and try again");
+        }
+        checkCapacity(t, assignmentWeight(s));
+        s.setTrip(t);
+        s.setStatus(ShipmentStatus.ASSIGNED_TO_TRIP);
+        shipments.save(s);
+        trackingEventService.record(s, s.getStatus(), "ASSIGNED_TO_TRIP",
+                "Package assigned directly to trip " + t.getTripNumber(), "Alexandria, VA", performedBy);
+        return s;
+    }
+
     @Transactional(readOnly = true)
     public List<Trip> listForUser(AuthPrincipal p) {
-        return switch (p.role()) {
-            case ADMIN, AGENT -> trips.findAll();
-            case TRAVELER -> trips.findAllByTravelerId(p.userId());
-            case SENDER -> List.of();
-        };
+        return p.role() == Role.SENDER ? List.of()
+                : trips.findAll().stream().filter(t -> access.canRead(p, t)).toList();
     }
 
     @Transactional
     public Trip updateStatus(UUID id, TripStatus status, User performedBy) {
-        Trip t = getById(id);
+        Trip t = trips.findForUpdate(id).orElseThrow(() -> new NotFoundException("Trip not found"));
         t.setStatus(status);
         trips.save(t);
         // Propagate semantics to contained shipments where applicable
         if (status == TripStatus.DEPARTED) {
-            for (Luggage l : t.getLuggageList()) {
+            for (Luggage l : luggage.findAllByTripId(id)) {
                 l.setStatus(LuggageStatus.IN_TRANSIT);
-                for (Shipment s : shipments.findAllByLuggageId(l.getId())) {
-                    s.setStatus(ShipmentStatus.DEPARTED_US);
-                    shipments.save(s);
-                    trackingEventService.record(s, ShipmentStatus.DEPARTED_US, "DEPARTED_US",
-                            "Departed USA", "USA", performedBy);
-                }
                 luggage.save(l);
             }
         } else if (status == TripStatus.ARRIVED) {
-            for (Luggage l : t.getLuggageList()) {
+            for (Luggage l : luggage.findAllByTripId(id)) {
                 l.setStatus(LuggageStatus.ARRIVED_ETHIOPIA);
-                for (Shipment s : shipments.findAllByLuggageId(l.getId())) {
-                    s.setStatus(ShipmentStatus.ARRIVED_ETHIOPIA);
-                    shipments.save(s);
-                    trackingEventService.record(s, ShipmentStatus.ARRIVED_ETHIOPIA, "ARRIVED_ETHIOPIA",
-                            "Arrived in Ethiopia", "Addis Ababa", performedBy);
-                }
                 luggage.save(l);
+            }
+        }
+        ShipmentStatus mapped = status == TripStatus.DEPARTED ? ShipmentStatus.DEPARTED_US
+                : status == TripStatus.ARRIVED ? ShipmentStatus.ARRIVED_ETHIOPIA : null;
+        if (mapped != null) {
+            for (Shipment s : shipments.findAllOnTrip(id)) {
+                s.setStatus(mapped);
+                shipments.save(s);
+                trackingEventService.record(s, mapped, mapped.name(),
+                        status == TripStatus.DEPARTED ? "Departed USA" : "Arrived in Ethiopia",
+                        status == TripStatus.DEPARTED ? "USA" : "Addis Ababa", performedBy);
             }
         }
         return t;

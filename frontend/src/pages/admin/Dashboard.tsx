@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AdminApi, ShipmentApi, TripApi } from '../../api/endpoints';
 import { ShipmentStatusSelect } from '../../components/ShipmentStatusSelect';
+import { PackagePhoto } from '../../components/PackagePhoto';
+import { RecipientDetails } from '../../components/RecipientDetails';
 
 const EMPTY_TRIP = {
   travelerId: '', departureAirport: 'IAD', arrivalAirport: 'ADD',
@@ -41,7 +43,6 @@ export function AdminDashboard() {
     },
     onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to create user'),
   });
-  const [photo, setPhoto] = useState<string | null>(null);
   const removeMut = useMutation({
     mutationFn: (id: string) => ShipmentApi.remove(id),
     onSuccess: () => {
@@ -96,6 +97,8 @@ export function AdminDashboard() {
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Admin dashboard</h1>
         <div className="flex gap-2">
+          <Link className="btn btn-ghost" to="/admin/access">Private access</Link>
+          <Link className="btn btn-ghost" to="/admin/luggage">Luggage consolidation</Link>
           <button className="btn btn-ghost" onClick={() => setShowUser(!showUser)} data-testid="admin-create-user">+ New user</button>
           <Link className="btn btn-ghost" to="/send" data-testid="admin-create-shipment">+ New shipment</Link>
           <button className="btn btn-brand" onClick={() => setShowForm(!showForm)} data-testid="admin-create-trip">+ New trip</button>
@@ -117,7 +120,7 @@ export function AdminDashboard() {
           <div><label className="label">Last name</label><input className="input" value={user.lastName} onChange={updUser('lastName')} required /></div>
           <div><label className="label">Email</label><input className="input" type="email" value={user.email} onChange={updUser('email')} required /></div>
           <div><label className="label">Phone</label><input className="input" value={user.phone} onChange={updUser('phone')} /></div>
-          <div className="md:col-span-2"><label className="label">Temporary password</label><input className="input" type="password" minLength={6} value={user.password} onChange={updUser('password')} required /></div>
+          <div className="md:col-span-2"><label className="label">Temporary password (at least 12 characters)</label><input className="input" type="password" minLength={12} maxLength={72} value={user.password} onChange={updUser('password')} required /></div>
           <button className="btn btn-brand md:col-span-2" disabled={createUser.isPending}>
             {createUser.isPending ? 'Creating...' : 'Create user'}
           </button>
@@ -141,7 +144,7 @@ export function AdminDashboard() {
           <div><label className="label">Departure date</label><input className="input" type="date" value={trip.departureDate} onChange={upd('departureDate')} required /></div>
           <div><label className="label">Expected arrival</label><input className="input" type="date" value={trip.expectedArrivalDate} onChange={upd('expectedArrivalDate')} /></div>
           <div><label className="label">Total capacity (kg)</label><input className="input" type="number" step="0.1" min="0.1" value={trip.totalLuggageCapacity} onChange={upd('totalLuggageCapacity')} required /></div>
-          <div><label className="label">Number of luggage</label><input className="input" type="number" min="1" value={trip.numberOfLuggage} onChange={upd('numberOfLuggage')} required /></div>
+          <div><label className="label">Pre-create luggage (0 to assign existing luggage later)</label><input className="input" type="number" min="0" value={trip.numberOfLuggage} onChange={upd('numberOfLuggage')} required /></div>
           <div className="md:col-span-3"><label className="label">Notes</label><input className="input" value={trip.notes} onChange={upd('notes')} /></div>
           <button className="btn btn-brand md:col-span-3" disabled={createTrip.isPending}>
             {createTrip.isPending ? 'Creating...' : 'Create trip'}
@@ -203,18 +206,17 @@ export function AdminDashboard() {
         )}
         <table className="w-full text-sm">
           <thead className="text-xs text-ink-500">
-            <tr><th className="text-left py-1">Tracking</th><th className="text-left">Sender</th><th className="text-left">Type</th><th className="text-left">Photo</th><th className="text-left">Weight</th><th className="text-left">Fee</th><th className="text-left">Payment</th><th className="text-left">Status</th><th className="text-left">Traveler</th><th className="text-left">Receiving agent</th><th></th></tr>
+            <tr><th className="text-left py-1">Tracking</th><th className="text-left">Sender</th><th className="text-left">Recipients / description</th><th className="text-left">Type</th><th className="text-left">Photo</th><th className="text-left">Weight</th><th className="text-left">Fee</th><th className="text-left">Payment</th><th className="text-left">Status</th><th className="text-left">Trip / luggage</th><th className="text-left">Traveler</th><th className="text-left">Receiving agent</th><th></th></tr>
           </thead>
           <tbody className="divide-y divide-ink-300/50">
             {shipments.data?.map(s => (
               <tr key={s.id}>
                 <td className="py-2 font-mono">{s.trackingNumber}</td>
                 <td>{s.senderName}</td>
+                <td><RecipientDetails name={s.recipient.name} phone={s.recipient.phone} recipients={s.recipients} description={s.description} /></td>
                 <td>{s.packageType}</td>
                 <td>
-                  {s.hasPhoto
-                    ? <button className="btn btn-ghost text-xs" onClick={() => ShipmentApi.photo(s.id).then(setPhoto).catch(() => toast.error('Could not load photo'))}>View</button>
-                    : <span className="text-ink-500">—</span>}
+                  <PackagePhoto id={s.id} trackingNumber={s.trackingNumber} hasPhoto={!!s.hasPhoto} senderId={s.senderId} />
                 </td>
                 <td>{s.declaredWeightKg} kg</td>
                 <td>${Number(s.totalAmount ?? 0).toFixed(2)}</td>
@@ -226,6 +228,12 @@ export function AdminDashboard() {
                   </select>
                 </td>
                 <td><ShipmentStatusSelect id={s.id} value={s.status} testId={`shipment-status-${s.trackingNumber}`} /></td>
+                <td>
+                  {s.tripId
+                    ? <Link className="text-brand-600 underline" to={`/admin/trips/${s.tripId}`}>{s.tripNumber}</Link>
+                    : <span className="text-ink-500">No trip</span>}
+                  <div className="text-xs text-ink-500">{s.luggageNumber ?? 'No luggage'}</div>
+                </td>
                 <td>
                   <select className="input !py-1" value={s.assignedTravelerId ?? ''}
                     onChange={e => travelerMut.mutate({ id: s.id, travelerId: e.target.value || null })}
@@ -253,11 +261,6 @@ export function AdminDashboard() {
           </tbody>
         </table>
       </div>
-      {photo && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setPhoto(null)}>
-          <img src={photo} alt="Package" className="max-h-[85vh] max-w-full rounded-xl" />
-        </div>
-      )}
     </div>
   );
 }

@@ -19,7 +19,7 @@ public class TrackingEventService {
         TrackingEvent e = TrackingEvent.builder()
                 .shipment(s)
                 .luggage(s.getLuggage())
-                .trip(s.getLuggage() == null ? null : s.getLuggage().getTrip())
+                .trip(s.transportTrip())
                 .eventType(eventType)
                 .status(status)
                 .description(description)

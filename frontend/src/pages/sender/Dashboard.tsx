@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { ShipmentApi } from '../../api/endpoints';
 import { StatusBadge } from '../../components/StatusBadge';
 import { Package } from 'lucide-react';
+import { PackagePhoto } from '../../components/PackagePhoto';
+import { RecipientDetails } from '../../components/RecipientDetails';
 
 export function SenderDashboard() {
   const q = useQuery({ queryKey: ['my-shipments'], queryFn: ShipmentApi.list });
@@ -24,7 +26,8 @@ export function SenderDashboard() {
 
       <div className="grid md:grid-cols-2 gap-4" data-testid="sender-shipments">
         {q.data?.map(s => (
-          <Link to={`/track/${s.trackingNumber}`} className="card hover:shadow-md transition" key={s.id} data-testid={`shipment-${s.trackingNumber}`}>
+          <div className="card hover:shadow-md transition" key={s.id} data-testid={`shipment-${s.trackingNumber}`}>
+          <Link to={`/track/${s.trackingNumber}`} className="block">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-xs uppercase tracking-widest text-ink-500">Tracking</div>
@@ -35,10 +38,16 @@ export function SenderDashboard() {
             <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
               <div><div className="text-ink-500 text-xs">To</div><div className="font-semibold">{s.destinationCity}</div></div>
               <div><div className="text-ink-500 text-xs">Weight</div><div className="font-semibold">{s.declaredWeightKg} kg</div></div>
-              <div><div className="text-ink-500 text-xs">Receiver</div><div className="font-semibold">{s.recipient.name}</div></div>
               <div><div className="text-ink-500 text-xs">Total</div><div className="font-semibold">${s.totalAmount}</div></div>
             </div>
           </Link>
+            <div className="mt-3">
+              <RecipientDetails name={s.recipient.name} phone={s.recipient.phone} recipients={s.recipients} description={s.description} />
+            </div>
+            <div className="mt-4">
+              <PackagePhoto id={s.id} trackingNumber={s.trackingNumber} hasPhoto={!!s.hasPhoto} senderId={s.senderId} />
+            </div>
+          </div>
         ))}
       </div>
     </div>

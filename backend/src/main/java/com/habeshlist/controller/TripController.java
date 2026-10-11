@@ -10,6 +10,7 @@ import com.habeshlist.exception.BadRequestException;
 import com.habeshlist.repository.UserRepository;
 import com.habeshlist.security.AuthPrincipal;
 import com.habeshlist.security.SecurityUtils;
+import com.habeshlist.security.ShipmentAccess;
 import com.habeshlist.service.DtoMapper;
 import com.habeshlist.service.TripService;
 import jakarta.validation.Valid;
@@ -28,11 +29,14 @@ public class TripController {
     private final TripService tripService;
     private final DtoMapper mapper;
     private final UserRepository users;
+    private final ShipmentAccess access;
 
-    public TripController(TripService tripService, DtoMapper mapper, UserRepository users) {
+    public TripController(TripService tripService, DtoMapper mapper, UserRepository users,
+                          ShipmentAccess access) {
         this.tripService = tripService;
         this.mapper = mapper;
         this.users = users;
+        this.access = access;
     }
 
     @PostMapping
@@ -52,7 +56,7 @@ public class TripController {
     public ResponseEntity<ApiDtos.TripDto> get(@PathVariable UUID id) {
         AuthPrincipal p = SecurityUtils.currentUser();
         Trip t = tripService.getById(id);
-        assertCanRead(p, t);
+        access.assertCanRead(p, t);
         return ResponseEntity.ok(mapper.toTripDto(t));
     }
 
@@ -72,13 +76,4 @@ public class TripController {
         return ResponseEntity.ok(mapper.toTripDto(t));
     }
 
-    public static void assertCanRead(AuthPrincipal p, Trip t) {
-        switch (p.role()) {
-            case ADMIN, AGENT -> {}
-            case TRAVELER -> {
-                if (!t.getTraveler().getId().equals(p.userId())) throw new AccessDeniedException("Not your trip");
-            }
-            case SENDER -> throw new AccessDeniedException("Not allowed");
-        }
-    }
 }

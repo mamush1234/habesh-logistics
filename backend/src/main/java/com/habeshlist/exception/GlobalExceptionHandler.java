@@ -15,6 +15,16 @@ import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<Map<String, Object>> status(org.springframework.web.server.ResponseStatusException ex) {
+        return build(HttpStatus.valueOf(ex.getStatusCode().value()), ex.getReason(), null);
+    }
+
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, Object>> conflict(org.springframework.dao.DataIntegrityViolationException ex) {
+        org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class).warn("Database constraint rejected an operation");
+        return build(HttpStatus.CONFLICT, "The operation conflicts with existing data. Refresh and try again.", null);
+    }
 
     @ExceptionHandler(NotFoundException.class)
     public ResponseEntity<Map<String, Object>> notFound(NotFoundException ex) {

@@ -11,8 +11,10 @@ import com.habeshlist.repository.TrackingEventRepository;
 import com.habeshlist.repository.UserRepository;
 import com.habeshlist.security.AuthPrincipal;
 import com.habeshlist.security.SecurityUtils;
+import com.habeshlist.security.ShipmentAccess;
 import com.habeshlist.service.DtoMapper;
 import com.habeshlist.service.ShipmentService;
+import com.habeshlist.service.TripService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -30,13 +32,15 @@ public class ShipmentController {
     private final UserRepository users;
     private final TrackingEventRepository events;
     private final DtoMapper mapper;
+    private final TripService tripService;
 
     public ShipmentController(ShipmentService shipmentService, UserRepository users,
-                              TrackingEventRepository events, DtoMapper mapper) {
+                              TrackingEventRepository events, DtoMapper mapper, TripService tripService) {
         this.shipmentService = shipmentService;
         this.users = users;
         this.events = events;
         this.mapper = mapper;
+        this.tripService = tripService;
     }
 
     @PostMapping
@@ -44,14 +48,6 @@ public class ShipmentController {
         AuthPrincipal p = SecurityUtils.currentUser();
         Shipment s = shipmentService.createShipment(p, req);
         return ResponseEntity.ok(ApiDtos.ShipmentDto.from(s));
-    }
-
-    /** PUBLIC guest checkout: returns only the tracking number. */
-    @PostMapping("/guest")
-    public ResponseEntity<java.util.Map<String, String>> createGuest(
-            @Valid @RequestBody RequestDtos.CreateShipmentRequest req) {
-        Shipment s = shipmentService.createGuestShipment(req);
-        return ResponseEntity.ok(java.util.Map.of("trackingNumber", s.getTrackingNumber()));
     }
 
     @GetMapping
@@ -95,6 +91,29 @@ public class ShipmentController {
                 .map(ApiDtos.TrackingEventDto::from).toList();
     }
 
+    @GetMapping("/{id}/photos")
+    public ResponseEntity<java.util.Map<String, List<String>>> photos(@PathVariable UUID id) {
+        Shipment s = shipmentService.getById(id);
+        assertCanRead(SecurityUtils.currentUser(), s);
+        return ResponseEntity.ok(java.util.Map.of("photos", s.allPhotos()));
+    }
+
+    @PutMapping("/{id}/photos")
+    @PreAuthorize("hasAnyRole('ADMIN','SENDER')")
+    public ResponseEntity<ApiDtos.ShipmentDto> updatePhotos(@PathVariable UUID id,
+            @Valid @RequestBody RequestDtos.UpdatePhotosRequest req) {
+        return ResponseEntity.ok(ApiDtos.ShipmentDto.from(
+                shipmentService.updatePhotos(id, req.photoDataUrls(), SecurityUtils.currentUser())));
+    }
+
+    @PutMapping("/{id}/photo")
+    @PreAuthorize("hasAnyRole('ADMIN','SENDER')")
+    public ResponseEntity<ApiDtos.ShipmentDto> updatePhoto(@PathVariable UUID id,
+                                                          @Valid @RequestBody RequestDtos.UpdatePhotoRequest req) {
+        return ResponseEntity.ok(ApiDtos.ShipmentDto.from(
+                shipmentService.updatePhoto(id, req.photoDataUrl(), SecurityUtils.currentUser())));
+    }
+
     @PutMapping("/{id}/status")
     public ResponseEntity<ApiDtos.ShipmentDto> updateStatus(@PathVariable UUID id,
                                                             @Valid @RequestBody RequestDtos.UpdateStatusRequest req) {
@@ -102,13 +121,11 @@ public class ShipmentController {
         if (p.role() == Role.SENDER) throw new AccessDeniedException("Not allowed");
         if (p.role() != Role.ADMIN) {
             Shipment target = shipmentService.getById(id);
-            boolean assigned = (p.role() == Role.AGENT && target.getAssignedAgent() != null
-                    && target.getAssignedAgent().getId().equals(p.userId()))
-                    || (p.role() == Role.TRAVELER && (
-                        (target.getAssignedTraveler() != null && target.getAssignedTraveler().getId().equals(p.userId()))
-                        || (target.getLuggage() != null && target.getLuggage().getTrip().getTraveler().getId().equals(p.userId()))
-                        || (target.getLuggage() != null && target.getLuggage().getAssignedTraveler() != null
-                            && target.getLuggage().getAssignedTraveler().getId().equals(p.userId()))));
+            boolean assigned = (p.role() == Role.AGENT
+                    && ((target.getAssignedAgent() != null && target.getAssignedAgent().getId().equals(p.userId()))
+                        || (target.getLuggage() != null
+                            && ShipmentAccess.isAssigned(p, target.getLuggage()))))
+                    || (p.role() == Role.TRAVELER && target.isCarriedBy(p.userId()));
             if (!assigned) throw new AccessDeniedException("Only the assigned traveler/agent or an admin can change status");
         }
         User performed = users.findById(p.userId()).orElseThrow();
@@ -147,29 +164,15 @@ public class ShipmentController {
         return ResponseEntity.ok(ApiDtos.ShipmentDto.from(shipmentService.assignTraveler(id, req.travelerId())));
     }
 
+    @PutMapping("/{id}/trip")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiDtos.ShipmentDto> assignTrip(@PathVariable UUID id,
+                                                          @RequestBody RequestDtos.AssignTripRequest req) {
+        User performed = users.findById(SecurityUtils.currentUser().userId()).orElseThrow();
+        return ResponseEntity.ok(ApiDtos.ShipmentDto.from(tripService.assignShipment(id, req.tripId(), performed)));
+    }
+
     public static void assertCanRead(AuthPrincipal p, Shipment s) {
-        switch (p.role()) {
-            case ADMIN -> {}
-            case SENDER -> {
-                if (!s.getSender().getId().equals(p.userId())) throw new AccessDeniedException("Not your shipment");
-            }
-            case AGENT -> {
-                boolean referred = s.getReferringAgent() != null && s.getReferringAgent().getId().equals(p.userId());
-                boolean assigned = s.getAssignedAgent() != null && s.getAssignedAgent().getId().equals(p.userId());
-                boolean onLuggage = s.getLuggage() != null && s.getLuggage().getAssignedAgent() != null
-                        && s.getLuggage().getAssignedAgent().getId().equals(p.userId());
-                if (!referred && !assigned && !onLuggage) throw new AccessDeniedException("Not authorized");
-            }
-            case TRAVELER -> {
-                boolean assignedTraveler = s.getAssignedTraveler() != null && s.getAssignedTraveler().getId().equals(p.userId());
-                boolean onTrip = s.getLuggage() != null
-                        && s.getLuggage().getTrip().getTraveler().getId().equals(p.userId());
-                boolean onLuggage = s.getLuggage() != null && s.getLuggage().getAssignedTraveler() != null
-                        && s.getLuggage().getAssignedTraveler().getId().equals(p.userId());
-                if (!assignedTraveler && !onTrip && !onLuggage) {
-                    throw new AccessDeniedException("Not your trip");
-                }
-            }
-        }
+        ShipmentAccess.assertCanRead(p, s);
     }
 }

@@ -11,8 +11,10 @@ import com.habeshlist.exception.NotFoundException;
 import com.habeshlist.repository.UserRepository;
 import com.habeshlist.security.AuthPrincipal;
 import com.habeshlist.security.SecurityUtils;
+import com.habeshlist.security.ShipmentAccess;
 import com.habeshlist.service.DtoMapper;
 import com.habeshlist.service.LuggageService;
+import com.habeshlist.service.ShipmentService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -20,6 +22,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -29,11 +32,16 @@ public class LuggageController {
     private final LuggageService luggageService;
     private final UserRepository users;
     private final DtoMapper mapper;
+    private final ShipmentAccess access;
+    private final ShipmentService shipments;
 
-    public LuggageController(LuggageService luggageService, UserRepository users, DtoMapper mapper) {
+    public LuggageController(LuggageService luggageService, UserRepository users, DtoMapper mapper,
+                             ShipmentAccess access, ShipmentService shipments) {
         this.luggageService = luggageService;
         this.users = users;
         this.mapper = mapper;
+        this.access = access;
+        this.shipments = shipments;
     }
 
     @PostMapping
@@ -43,20 +51,32 @@ public class LuggageController {
         return ResponseEntity.ok(mapper.toLuggageDto(l));
     }
 
+    @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public List<ApiDtos.LuggageDto> list() {
+        return luggageService.list().stream().map(mapper::toLuggageDto).toList();
+    }
+
+    @PutMapping("/{id}/trip")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiDtos.LuggageDto> assignTrip(@PathVariable UUID id,
+                                                        @RequestBody RequestDtos.AssignTripRequest req) {
+        User performed = users.findById(SecurityUtils.currentUser().userId()).orElseThrow();
+        return ResponseEntity.ok(mapper.toLuggageDto(luggageService.assignTrip(id, req.tripId(), performed)));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<ApiDtos.LuggageDto> get(@PathVariable UUID id) {
         AuthPrincipal p = SecurityUtils.currentUser();
         Luggage l = luggageService.getById(id);
-        // sender cannot read luggage
-        if (p.role() == Role.SENDER) throw new AccessDeniedException("Not allowed");
-        if (p.role() == Role.TRAVELER && !isTravelerOf(l, p.userId()))
-            throw new AccessDeniedException("Not your luggage");
+        access.assertCanRead(p, l);
         return ResponseEntity.ok(mapper.toLuggageDto(l));
     }
 
-    private static boolean isTravelerOf(Luggage l, UUID userId) {
-        return l.getTrip().getTraveler().getId().equals(userId)
-                || (l.getAssignedTraveler() != null && l.getAssignedTraveler().getId().equals(userId));
+    private void assertCanManage(AuthPrincipal user, UUID id) {
+        if (!ShipmentAccess.isAssigned(user, luggageService.getById(id))) {
+            throw new AccessDeniedException("Only assigned staff can change this luggage");
+        }
     }
 
     @PutMapping("/{id}/agent")
@@ -88,6 +108,8 @@ public class LuggageController {
     public ResponseEntity<ApiDtos.LuggageDto> assign(@PathVariable UUID id,
                                                      @Valid @RequestBody RequestDtos.AssignShipmentRequest req) {
         AuthPrincipal p = SecurityUtils.currentUser();
+        assertCanManage(p, id);
+        ShipmentAccess.assertCanRead(p, shipments.getById(req.shipmentId()));
         User performed = users.findById(p.userId()).orElseThrow();
         luggageService.assignShipment(id, req.shipmentId(), performed);
         return ResponseEntity.ok(mapper.toLuggageDto(luggageService.getById(id)));
@@ -97,8 +119,24 @@ public class LuggageController {
     @PreAuthorize("hasAnyRole('ADMIN','AGENT')")
     public ResponseEntity<ApiDtos.LuggageDto> unassign(@PathVariable UUID id, @PathVariable UUID shipmentId) {
         AuthPrincipal p = SecurityUtils.currentUser();
+        assertCanManage(p, id);
+        ShipmentAccess.assertCanRead(p, shipments.getById(shipmentId));
         User performed = users.findById(p.userId()).orElseThrow();
         luggageService.unassignShipment(id, shipmentId, performed);
+        return ResponseEntity.ok(mapper.toLuggageDto(luggageService.getById(id)));
+    }
+
+    @PostMapping("/{id}/shipments/batch")
+    @PreAuthorize("hasAnyRole('ADMIN','AGENT')")
+    public ResponseEntity<ApiDtos.LuggageDto> assignBatch(@PathVariable UUID id,
+                                                          @Valid @RequestBody RequestDtos.AssignShipmentsRequest req) {
+        AuthPrincipal p = SecurityUtils.currentUser();
+        assertCanManage(p, id);
+        for (UUID shipmentId : req.shipmentIds()) {
+            ShipmentAccess.assertCanRead(p, shipments.getById(shipmentId));
+        }
+        User performed = users.findById(p.userId()).orElseThrow();
+        luggageService.assignShipments(id, req.shipmentIds(), performed);
         return ResponseEntity.ok(mapper.toLuggageDto(luggageService.getById(id)));
     }
 
@@ -106,10 +144,7 @@ public class LuggageController {
     public ResponseEntity<ApiDtos.LuggageDto> updateStatus(@PathVariable UUID id,
                                                            @Valid @RequestBody RequestDtos.UpdateLuggageStatusRequest req) {
         AuthPrincipal p = SecurityUtils.currentUser();
-        Luggage l = luggageService.getById(id);
-        if (p.role() == Role.SENDER) throw new AccessDeniedException("Not allowed");
-        if (p.role() == Role.TRAVELER && !isTravelerOf(l, p.userId()))
-            throw new AccessDeniedException("Not your luggage");
+        assertCanManage(p, id);
         LuggageStatus st;
         try { st = LuggageStatus.valueOf(req.status()); }
         catch (IllegalArgumentException e) { throw new BadRequestException("Invalid status"); }

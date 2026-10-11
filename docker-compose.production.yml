@@ -1,0 +1,76 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: habesh
+      POSTGRES_USER: habesh
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set a unique DB_PASSWORD}
+    volumes:
+      - production-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U habesh -d habesh"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [database]
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      DB_URL: jdbc:postgresql://db:5432/habesh
+      DB_USER: habesh
+      DB_PASSWORD: ${DB_PASSWORD:?Set a unique DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?Set a unique random JWT_SECRET}
+      JWT_EXPIRATION_MS: "3600000"
+      DEMO_DATA_ENABLED: "false"
+      API_DOCS_ENABLED: "false"
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:?Set INITIAL_ADMIN_EMAIL}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?Set a strong INITIAL_ADMIN_PASSWORD}
+      CORS_ORIGINS: https://${APP_DOMAIN:?Set APP_DOMAIN}
+      APP_WEBSITE_URL: https://${APP_DOMAIN:?Set APP_DOMAIN}
+      INVITATION_EMAIL_ENABLED: ${INVITATION_EMAIL_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-habeshalist@gmail.com}
+    networks: [database, web]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ""
+    restart: unless-stopped
+    networks: [web]
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [backend, frontend]
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [web]
+
+networks:
+  database:
+    internal: true
+  web:
+
+volumes:
+  production-db:
+  caddy-data:
+  caddy-config:

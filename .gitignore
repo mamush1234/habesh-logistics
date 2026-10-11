@@ -9,6 +9,9 @@ build/
 # Env
 .env
 .env.local
+.env.*
+!.env.example
+!.env.production.example
 
 # IDE
 .idea/
@@ -21,3 +24,6 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Documentation
+README.md

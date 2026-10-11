@@ -28,7 +28,7 @@ public class Luggage {
     @Column(nullable = false, unique = true, length = 32)
     private String luggageNumber;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "trip_id")
     private Trip trip;
 

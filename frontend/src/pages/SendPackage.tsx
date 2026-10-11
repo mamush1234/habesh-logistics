@@ -6,28 +6,23 @@ import { AdminApi, PublicApi, ShipmentApi } from '../api/endpoints';
 import { toast } from 'sonner';
 import { Check } from 'lucide-react';
 import { clsx } from 'clsx';
+import { preparePackagePhoto } from '../util/packagePhoto';
+import { PrivateQr } from '../components/PrivateQr';
 
 interface Form {
   destinationCountry: string;
   destinationCity: string;
   description: string;
   packageType: 'DOCUMENT' | 'MEDICINE' | 'OTHER';
-  photoDataUrl: string;
+  photoDataUrls: string[];
   declaredWeightKg: string;
-  recipientName: string;
-  recipientPhone: string;
-  recipientCity: string;
-  recipientAddress: string;
+  recipients: { name: string; phone: string; city: string; address: string }[];
   pickupMethod: 'ALEXANDRIA_DROPOFF' | 'PICKUP';
   pickupAddress: string;
   pickupRequestedDate: string;
   pickupTimeWindow: string;
   referralCode: string;
   senderId: string;
-  guestFirstName: string;
-  guestLastName: string;
-  guestEmail: string;
-  guestPhone: string;
 }
 
 const EMPTY: Form = {
@@ -35,14 +30,13 @@ const EMPTY: Form = {
   destinationCity: 'Addis Ababa',
   description: '',
   packageType: 'OTHER',
-  photoDataUrl: '',
+  photoDataUrls: [],
   declaredWeightKg: '',
-  recipientName: '', recipientPhone: '', recipientCity: 'Addis Ababa', recipientAddress: '',
+  recipients: [{ name: '', phone: '', city: 'Addis Ababa', address: '' }],
   pickupMethod: 'ALEXANDRIA_DROPOFF',
   pickupAddress: '', pickupRequestedDate: '', pickupTimeWindow: '',
   referralCode: '',
   senderId: '',
-  guestFirstName: '', guestLastName: '', guestEmail: '', guestPhone: '',
 };
 
 const STEPS = ['Destination', 'Package', 'Receiver', 'Delivery', 'Review'];
@@ -55,6 +49,7 @@ export function SendPackage() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<Form>(EMPTY);
   const [loading, setLoading] = useState(false);
+  const [preparingPhotos, setPreparingPhotos] = useState(false);
   const [created, setCreated] = useState<{ trackingNumber: string } | null>(null);
 
   const rate = Number(info.data?.defaultRatePerKg ?? 10);
@@ -65,25 +60,23 @@ export function SendPackage() {
     : weight * rate;
   const total = shippingFee + pickupFee;
 
-  function upd<K extends keyof Form>(k: K, v: Form[K]) { setForm({ ...form, [k]: v }); }
+  function upd<K extends keyof Form>(k: K, v: Form[K]) { setForm(current => ({ ...current, [k]: v })); }
 
-  // Downscale to keep the upload small
-  function onPhoto(file?: File) {
-    if (!file) { upd('photoDataUrl', ''); return; }
-    if (!file.type.startsWith('image/')) { toast.error('Please choose an image'); return; }
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      const scale = Math.min(1, 1024 / Math.max(img.width, img.height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      setForm(f => ({ ...f, photoDataUrl: canvas.toDataURL('image/jpeg', 0.8) }));
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); toast.error('Could not read image'); };
-    img.src = url;
+  async function onPhotos(files: File[]) {
+    if (!files.length) return;
+    if (form.photoDataUrls.length + files.length > 5) {
+      toast.error('A package can have up to 5 pictures');
+      return;
+    }
+    setPreparingPhotos(true);
+    try {
+      const photos = await Promise.all(files.map(preparePackagePhoto));
+      setForm(f => ({ ...f, photoDataUrls: [...f.photoDataUrls, ...photos] }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not prepare image');
+    } finally {
+      setPreparingPhotos(false);
+    }
   }
   function next() { setStep(Math.min(step + 1, STEPS.length - 1)); }
   function back() { setStep(Math.max(step - 1, 0)); }
@@ -97,31 +90,21 @@ export function SendPackage() {
     try {
       const payload = {
         senderId: isAdmin ? form.senderId : undefined,
-        ...(user ? {} : {
-          guestFirstName: form.guestFirstName,
-          guestLastName: form.guestLastName,
-          guestEmail: form.guestEmail,
-          guestPhone: form.guestPhone,
-        }),
         destinationCountry: form.destinationCountry,
         destinationCity: form.destinationCity,
         description: form.description,
         packageType: form.packageType,
-        photoDataUrl: form.photoDataUrl || undefined,
+        photoDataUrls: form.photoDataUrls,
         declaredWeightKg: Number(form.declaredWeightKg),
         pickupMethod: form.pickupMethod,
         pickupAddress: form.pickupMethod === 'PICKUP' ? form.pickupAddress : undefined,
         pickupRequestedDate: form.pickupMethod === 'PICKUP' ? form.pickupRequestedDate : undefined,
         pickupTimeWindow: form.pickupTimeWindow || undefined,
         referralCode: form.referralCode || undefined,
-        recipient: {
-          name: form.recipientName,
-          phone: form.recipientPhone,
-          city: form.recipientCity,
-          address: form.recipientAddress,
-        },
+        recipient: form.recipients[0],
+        additionalRecipients: form.recipients.slice(1),
       };
-      const s = user ? await ShipmentApi.create(payload) : await ShipmentApi.createGuest(payload);
+      const s = await ShipmentApi.create(payload);
       setCreated({ trackingNumber: s.trackingNumber });
       toast.success(`Shipment ${s.trackingNumber} created`);
     } catch (e: any) {
@@ -132,7 +115,6 @@ export function SendPackage() {
   }
 
   if (created) {
-    const qrUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/qr/tracking/${created.trackingNumber}`;
     return (
       <div className="max-w-xl mx-auto card text-center space-y-4" data-testid="confirmation">
         <div className="w-14 h-14 rounded-full bg-emerald-500 text-white grid place-items-center mx-auto">
@@ -141,12 +123,10 @@ export function SendPackage() {
         <h2 className="text-2xl font-bold">Shipment created</h2>
         <p className="text-ink-500">Save your tracking number — you’ll use it to pick up and track.</p>
         <div className="text-4xl font-display font-bold">{created.trackingNumber}</div>
-        <img src={qrUrl} alt="QR Code" className="mx-auto w-56 h-56 rounded-xl ring-1 ring-ink-300" />
+        <PrivateQr kind="tracking" value={created.trackingNumber} inline />
         <div className="flex justify-center gap-2">
-          {user
-            ? <Link className="btn btn-brand" to={`/track/${created.trackingNumber}`}>Track now</Link>
-            : <Link className="btn btn-brand" to="/login?next=/track">Log in to track</Link>}
-          {user && <Link className="btn btn-ghost" to="/my-shipments">My shipments</Link>}
+          <Link className="btn btn-brand" to={`/track/${created.trackingNumber}`}>Track now</Link>
+          <Link className="btn btn-ghost" to="/my-shipments">My shipments</Link>
         </div>
       </div>
     );
@@ -174,17 +154,6 @@ export function SendPackage() {
         {step === 0 && (
           <>
             <h2 className="text-lg font-semibold">Destination</h2>
-            {!user && (
-              <div className="rounded-xl bg-ink-100 p-4 space-y-3">
-                <div className="text-sm font-semibold">Your details <span className="font-normal text-ink-500">— or <Link to="/login?next=/send" className="text-brand-700 font-semibold">log in</Link></span></div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="label">First name</label><input className="input" value={form.guestFirstName} onChange={e => upd('guestFirstName', e.target.value)} data-testid="guest-first" /></div>
-                  <div><label className="label">Last name</label><input className="input" value={form.guestLastName} onChange={e => upd('guestLastName', e.target.value)} data-testid="guest-last" /></div>
-                  <div><label className="label">Email</label><input className="input" type="email" value={form.guestEmail} onChange={e => upd('guestEmail', e.target.value)} data-testid="guest-email" /></div>
-                  <div><label className="label">Phone</label><input className="input" value={form.guestPhone} onChange={e => upd('guestPhone', e.target.value)} data-testid="guest-phone" /></div>
-                </div>
-              </div>
-            )}
             {isAdmin && (
               <div>
                 <label className="label">Sender (on behalf of)</label>
@@ -216,21 +185,43 @@ export function SendPackage() {
             <div><label className="label">Description</label><input className="input" placeholder="Clothing, gifts, documents…" value={form.description} onChange={e => upd('description', e.target.value)} data-testid="pkg-desc" /></div>
             <div><label className="label">Estimated weight (kg)</label><input className="input" type="number" step="0.1" min="0.1" value={form.declaredWeightKg} onChange={e => upd('declaredWeightKg', e.target.value)} data-testid="pkg-weight" /></div>
             <div>
-              <label className="label">Package photo (optional)</label>
-              <input className="input" type="file" accept="image/*" onChange={e => onPhoto(e.target.files?.[0])} data-testid="pkg-photo" />
-              {form.photoDataUrl && <img src={form.photoDataUrl} alt="Package preview" className="mt-2 h-32 rounded-xl object-cover ring-1 ring-ink-300" />}
+              <label className="label">Package pictures (optional, up to 5) - {form.photoDataUrls.length}/5</label>
+              <input className="input" type="file" accept="image/*" multiple
+                disabled={preparingPhotos || form.photoDataUrls.length >= 5}
+                onChange={e => {
+                  const files = Array.from(e.target.files ?? []);
+                  e.target.value = '';
+                  void onPhotos(files);
+                }} data-testid="pkg-photo" />
+              {preparingPhotos && <p role="status" className="text-sm">Preparing pictures...</p>}
+              <div className="flex flex-wrap gap-3 mt-2">
+                {form.photoDataUrls.map((src, index) => <div key={index}>
+                  <img src={src} alt={`Package preview ${index + 1}`} className="h-24 w-24 rounded-xl object-contain ring-1 ring-ink-300" />
+                  <button type="button" className="text-xs text-red-600 underline" disabled={preparingPhotos}
+                    onClick={() => upd('photoDataUrls', form.photoDataUrls.filter((_, i) => i !== index))}>Remove picture {index + 1}</button>
+                </div>)}
+              </div>
             </div>
           </>
         )}
         {step === 2 && (
           <>
-            <h2 className="text-lg font-semibold">Receiver in Ethiopia</h2>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="label">Name</label><input className="input" value={form.recipientName} onChange={e => upd('recipientName', e.target.value)} required data-testid="rcpt-name" /></div>
-              <div><label className="label">Phone</label><input className="input" value={form.recipientPhone} onChange={e => upd('recipientPhone', e.target.value)} required data-testid="rcpt-phone" /></div>
-              <div><label className="label">City</label><input className="input" value={form.recipientCity} onChange={e => upd('recipientCity', e.target.value)} required data-testid="rcpt-city" /></div>
-              <div><label className="label">Address</label><input className="input" value={form.recipientAddress} onChange={e => upd('recipientAddress', e.target.value)} data-testid="rcpt-addr" /></div>
-            </div>
+            <h2 className="text-lg font-semibold">Recipients in Ethiopia</h2>
+            {form.recipients.map((recipient, index) => <fieldset key={index} className="rounded-xl border border-ink-300 p-3 space-y-3">
+              <legend className="font-semibold px-1">Recipient {index + 1}</legend>
+              <div className="grid grid-cols-2 gap-3">
+                {(['name', 'phone', 'city', 'address'] as const).map(field => <div key={field}>
+                  <label className="label" htmlFor={`recipient-${index}-${field}`}>{field[0].toUpperCase() + field.slice(1)}</label>
+                  <input id={`recipient-${index}-${field}`} className="input" value={recipient[field]}
+                    onChange={e => upd('recipients', form.recipients.map((r, i) => i === index ? { ...r, [field]: e.target.value } : r))}
+                    required={field !== 'address'} data-testid={`rcpt-${field === 'address' ? 'addr' : field}${index ? `-${index + 1}` : ''}`} />
+                </div>)}
+              </div>
+              {form.recipients.length > 1 && <button type="button" className="btn btn-ghost text-red-600 text-xs"
+                onClick={() => upd('recipients', form.recipients.filter((_, i) => i !== index))}>Remove recipient {index + 1}</button>}
+            </fieldset>)}
+            <button type="button" className="btn btn-ghost" onClick={() => upd('recipients',
+              [...form.recipients, { name: '', phone: '', city: form.destinationCity, address: '' }])}>Add recipient</button>
           </>
         )}
         {step === 3 && (
@@ -277,21 +268,27 @@ export function SendPackage() {
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div><div className="text-ink-500 text-xs">Destination</div><div className="font-semibold">{form.destinationCity}, {form.destinationCountry}</div></div>
-              <div><div className="text-ink-500 text-xs">Receiver</div><div className="font-semibold">{form.recipientName} · {form.recipientPhone}</div></div>
+              <div><div className="text-ink-500 text-xs">Recipients</div>
+                {form.recipients.map((recipient, index) => <div key={index} className="font-semibold">{recipient.name} · {recipient.phone}</div>)}
+              </div>
               <div><div className="text-ink-500 text-xs">Method</div><div className="font-semibold">{form.pickupMethod === 'PICKUP' ? 'Pickup' : 'Alexandria Drop-off'}</div></div>
               <div><div className="text-ink-500 text-xs">Payment</div><div className="font-semibold">To be collected</div></div>
             </div>
+            {form.photoDataUrls.length > 0 && <div className="flex flex-wrap gap-2">
+              {form.photoDataUrls.map((src, index) => <img key={index} src={src} alt={`Package preview ${index + 1}`}
+                className="w-20 h-20 object-contain rounded-lg" />)}
+            </div>}
           </>
         )}
 
         <div className="flex items-center justify-between pt-2">
-          <button className="btn btn-ghost" onClick={back} disabled={step === 0}>Back</button>
+          <button className="btn btn-ghost" onClick={back} disabled={step === 0 || preparingPhotos}>Back</button>
           {step < STEPS.length - 1 ? (
             <button className="btn btn-primary" onClick={next}
               disabled={
-                (step === 0 && !user && (!form.guestFirstName || !form.guestLastName || !form.guestEmail || !form.guestPhone)) ||
+                preparingPhotos ||
                 (step === 1 && !form.declaredWeightKg) ||
-                (step === 2 && (!form.recipientName || !form.recipientPhone || !form.recipientCity))
+                (step === 2 && form.recipients.some(r => !r.name.trim() || !r.phone.trim() || !r.city.trim()))
               }
               data-testid="step-next">
               Next

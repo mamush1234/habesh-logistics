@@ -7,6 +7,7 @@ import com.habeshlist.exception.BadRequestException;
 import com.habeshlist.repository.UserRepository;
 import com.habeshlist.service.AuthService;
 import com.habeshlist.service.ReferralService;
+import com.habeshlist.service.InvitationService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +25,8 @@ public class AdminController {
     private final ReferralService referralService;
     private final UserRepository users;
     private final AuthService authService;
+    private final InvitationService invitations;
+    private final com.habeshlist.service.InvitationEmailService invitationEmail;
     private final com.habeshlist.repository.AgentProfileRepository agentProfiles;
 
     @Value("${app.alexandria.address}")
@@ -32,11 +35,14 @@ public class AdminController {
     private String alexandriaHours;
 
     public AdminController(ReferralService referralService, UserRepository users, AuthService authService,
-                           com.habeshlist.repository.AgentProfileRepository agentProfiles) {
+                           com.habeshlist.repository.AgentProfileRepository agentProfiles, InvitationService invitations,
+                           com.habeshlist.service.InvitationEmailService invitationEmail) {
         this.agentProfiles = agentProfiles;
         this.referralService = referralService;
         this.users = users;
         this.authService = authService;
+        this.invitations = invitations;
+        this.invitationEmail = invitationEmail;
     }
 
     @PostMapping("/users")
@@ -45,8 +51,35 @@ public class AdminController {
         try { role = Role.valueOf(req.role().trim().toUpperCase()); }
         catch (IllegalArgumentException e) { throw new BadRequestException("Invalid role"); }
         if (role == Role.ADMIN) throw new BadRequestException("Cannot create admin users here");
+        AuthService.validateNewPassword(req.password());
         return ApiDtos.UserDto.from(authService.createPrivilegedUser(
                 req.firstName(), req.lastName(), req.email(), req.phone(), req.password(), role));
+    }
+
+    @PostMapping("/invitations")
+    public ApiDtos.InvitationDeliveryDto invite(@Valid @RequestBody RequestDtos.CreateInvitationRequest req) {
+        return invitationEmail.deliver(invitations.create(req));
+    }
+
+    @GetMapping("/invitations")
+    public List<ApiDtos.InvitationDto> invitations() { return invitations.list(); }
+
+    @DeleteMapping("/invitations/{id}")
+    public ResponseEntity<Void> revoke(@PathVariable java.util.UUID id) {
+        invitations.revoke(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/users/{id}/access")
+    @org.springframework.transaction.annotation.Transactional
+    public ApiDtos.UserDto access(@PathVariable java.util.UUID id,
+                                 @Valid @RequestBody RequestDtos.UpdateUserAccessRequest req) {
+        com.habeshlist.entity.User user = users.findForUpdate(id)
+                .orElseThrow(() -> new com.habeshlist.exception.NotFoundException("User not found"));
+        if (user.getRole() == Role.ADMIN) throw new BadRequestException("Administrator access cannot be changed here");
+        user.setActive(req.active());
+        user.setCredentialVersion(user.getCredentialVersion() + 1);
+        return ApiDtos.UserDto.from(users.save(user));
     }
 
     @GetMapping("/dashboard")
