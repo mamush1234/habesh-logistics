@@ -12,6 +12,7 @@ build/
 .env.*
 !.env.example
 !.env.production.example
+!.env.railway.example
 
 # IDE
 .idea/
