@@ -35,7 +35,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DB_URL: jdbc:postgresql://db:5432/habesh
+      DB_URL: jdbc:postgresql://db:5432/https://github.com/mamush1234/habesh-logistics
       DB_USER: habesh
       DB_PASSWORD: habesh
       JWT_SECRET: ${JWT_SECRET:?Set a unique random JWT_SECRET in .env}

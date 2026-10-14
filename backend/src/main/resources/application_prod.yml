@@ -1,0 +1,89 @@
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: /
+
+spring:
+  mail:
+    host: ${SMTP_HOST:smtp.gmail.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.starttls.required: true
+      mail.smtp.connectiontimeout: 10000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
+  application:
+    name: habesh-logistics
+
+  DATABASE_URL="postgresql://postgres:rCCDhwARLvDgcyVKVdCgQNXYRUCzHMQd@postgres.railway.internal:5432/railway"
+  PGDATA="/var/lib/postgresql/data/pgdata"
+  PGDATABASE="railway"
+  PGHOST="postgres.railway.internal"
+  PGPASSWORD="rCCDhwARLvDgcyVKVdCgQNXYRUCzHMQd"
+  PGPORT="5432"
+  PGUSER="postgres"
+  POSTGRES_DB="railway"
+  POSTGRES_PASSWORD="rCCDhwARLvDgcyVKVdCgQNXYRUCzHMQd"
+  POSTGRES_USER="postgres"
+  RAILWAY_DEPLOYMENT_DRAINING_SECONDS="60"
+  SSL_CERT_DAYS="820"
+
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/habesh}
+    username: ${DB_USER:habesh}
+    password: ${DB_PASSWORD:habesh}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+    open-in-view: true
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+app:
+  invitations:
+    email-enabled: ${INVITATION_EMAIL_ENABLED:false}
+    from: ${SMTP_FROM:habeshalist@gmail.com}
+    website-url: ${APP_WEBSITE_URL:http://localhost:3000}
+  demo-data-enabled: ${DEMO_DATA_ENABLED:false}
+  initial-admin:
+    email: ${INITIAL_ADMIN_EMAIL:}
+    password: ${INITIAL_ADMIN_PASSWORD:}
+  jwt:
+    secret: ${JWT_SECRET:}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
+  pricing:
+    default-rate-per-kg: ${DEFAULT_RATE_PER_KG:10.00}
+    default-pickup-fee: ${DEFAULT_PICKUP_FEE:15.00}
+    document-fee: ${DOCUMENT_FEE:10.00}
+    medicine-fee: ${MEDICINE_FEE:15.00}
+    default-commission-rate: ${DEFAULT_COMMISSION_RATE:0.10}
+  alexandria:
+    address: ${ALEXANDRIA_ADDRESS:1234 King St, Alexandria, VA 22314}
+    hours: ${ALEXANDRIA_HOURS:Mon-Sat 9AM-7PM}
+
+logging:
+  level:
+    org.springframework.security: INFO
+    com.habeshlist: INFO
+
+springdoc:
+  api-docs:
+    enabled: ${API_DOCS_ENABLED:false}
+    path: /api-docs
+  swagger-ui:
+    enabled: ${API_DOCS_ENABLED:false}
+    path: /swagger-ui.html
