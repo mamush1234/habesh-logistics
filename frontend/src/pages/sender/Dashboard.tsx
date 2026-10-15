@@ -5,9 +5,10 @@ import { StatusBadge } from '../../components/StatusBadge';
 import { Package } from 'lucide-react';
 import { PackagePhoto } from '../../components/PackagePhoto';
 import { RecipientDetails } from '../../components/RecipientDetails';
+import { TravelCalendar } from '../../components/TravelCalendar';
 
 export function SenderDashboard() {
-  const q = useQuery({ queryKey: ['my-shipments'], queryFn: ShipmentApi.list });
+  const q = useQuery({ queryKey: ['my-shipments'], queryFn: ShipmentApi.list, refetchInterval: 30_000 });
 
   return (
     <div className="space-y-6">
@@ -15,6 +16,8 @@ export function SenderDashboard() {
         <h1 className="text-3xl font-bold">My shipments</h1>
         <Link to="/send" className="btn btn-brand"><Package className="w-4 h-4" /> New shipment</Link>
       </div>
+
+      <TravelCalendar />
 
       {q.isLoading && <p className="text-ink-500">Loading…</p>}
       {q.data && q.data.length === 0 && (
@@ -41,6 +44,15 @@ export function SenderDashboard() {
               <div><div className="text-ink-500 text-xs">Total</div><div className="font-semibold">${s.totalAmount}</div></div>
             </div>
           </Link>
+            {s.travelAnnouncementId && <div className="mt-3 rounded-xl bg-ink-100 p-3 text-sm space-y-1">
+              <p className="font-semibold">Requested travel: {s.travelRoute}</p>
+              <p>{s.travelDepartureDate && new Date(`${s.travelDepartureDate}T00:00:00`).toLocaleDateString()}
+                {' '}&middot; {s.declaredWeightKg} kg &middot; {s.travelBookingStatus}</p>
+              {s.travelBookingStatus === 'PENDING' && <p>Waiting for agent approval. No space reserved yet.</p>}
+              {s.travelBookingStatus === 'APPROVED' && <p>Your {s.declaredWeightKg} kg space is reserved.</p>}
+              {s.travelBookingStatus === 'REJECTED' && <p>The agent declined this travel request. No space reserved.</p>}
+              {s.travelBookingStatus === 'CANCELLED' && <p>Travel reservation cancelled. No space reserved.</p>}
+            </div>}
             <div className="mt-3">
               <RecipientDetails name={s.recipient.name} phone={s.recipient.phone} recipients={s.recipients} description={s.description} />
             </div>

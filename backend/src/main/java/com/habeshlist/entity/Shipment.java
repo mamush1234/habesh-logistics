@@ -21,6 +21,7 @@ import java.util.List;
         @Index(name = "idx_shipments_luggage", columnList = "luggage_id")
 })
 @EntityListeners(AuditingEntityListener.class)
+@org.hibernate.annotations.DynamicUpdate
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class Shipment {
     @Id
@@ -141,6 +142,14 @@ public class Shipment {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "trip_id")
     private Trip trip;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "travel_announcement_id")
+    private TravelAnnouncement travelAnnouncement;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 32)
+    private TravelBookingStatus travelBookingStatus;
 
     public Trip transportTrip() {
         return luggage == null ? trip : luggage.getTrip();

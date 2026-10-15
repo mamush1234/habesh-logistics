@@ -31,6 +31,7 @@ public class ShipmentService {
     private final PickupRepository pickups;
     private final CommissionRepository commissions;
     private final TrackingEventService trackingEventService;
+    private final TravelAnnouncementService travelAnnouncements;
 
     @Value("${app.pricing.default-rate-per-kg}")
     private BigDecimal defaultRate;
@@ -46,7 +47,7 @@ public class ShipmentService {
     public ShipmentService(ShipmentRepository shipments, RecipientRepository recipients,
                            UserRepository users, AgentProfileRepository agentProfiles,
                            PickupRepository pickups, CommissionRepository commissions,
-                           TrackingEventService trackingEventService) {
+                           TrackingEventService trackingEventService, TravelAnnouncementService travelAnnouncements) {
         this.shipments = shipments;
         this.recipients = recipients;
         this.users = users;
@@ -54,6 +55,7 @@ public class ShipmentService {
         this.pickups = pickups;
         this.commissions = commissions;
         this.trackingEventService = trackingEventService;
+        this.travelAnnouncements = travelAnnouncements;
     }
 
     /** Initialize tracking sequence based on existing shipments; call at app startup. */
@@ -137,6 +139,7 @@ public class ShipmentService {
                 .build();
         s.getAdditionalRecipients().addAll(additionalRecipients);
         s.replacePhotos(photos);
+        travelAnnouncements.requestSpace(s, req.travelAnnouncementId());
         shipments.save(s);
 
         trackingEventService.record(s, ShipmentStatus.CREATED, "SHIPMENT_CREATED",
@@ -282,8 +285,11 @@ public class ShipmentService {
 
     @Transactional
     public Shipment updateStatus(UUID id, ShipmentStatus newStatus, String location, String description, User performedBy) {
-        Shipment s = getById(id);
+        Shipment s = shipments.findForUpdate(id).orElseThrow(() -> new NotFoundException("Shipment not found"));
         s.setStatus(newStatus);
+        if (newStatus == ShipmentStatus.CANCELLED && s.getTravelAnnouncement() != null) {
+            s.setTravelBookingStatus(TravelBookingStatus.CANCELLED);
+        }
         shipments.save(s);
         trackingEventService.record(s, newStatus, "STATUS_" + newStatus.name(),
                 description == null ? ("Status: " + newStatus.name()) : description, location, performedBy);

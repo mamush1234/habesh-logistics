@@ -22,6 +22,9 @@ export function ShipmentStatusSelect({ id, value, testId }: { id: string; value:
       qc.invalidateQueries({ queryKey: ['trips'] });
       qc.invalidateQueries({ queryKey: ['trip'] });
       qc.invalidateQueries({ queryKey: ['luggage'] });
+      qc.invalidateQueries({ queryKey: ['travel-announcements'] });
+      qc.invalidateQueries({ queryKey: ['travel-requests'] });
+      qc.invalidateQueries({ queryKey: ['my-shipments'] });
     },
     onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to update status'),
   });

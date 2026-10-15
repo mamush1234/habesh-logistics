@@ -53,7 +53,8 @@ public final class ApiDtos {
             UUID assignedAgentId, String assignedAgentName,
             UUID assignedTravelerId, String assignedTravelerName, boolean hasPhoto,
             UUID tripId, String tripNumber,
-            Instant createdAt, Instant updatedAt, List<RecipientDto> recipients, int photoCount) {
+            Instant createdAt, Instant updatedAt, List<RecipientDto> recipients, int photoCount,
+            UUID travelAnnouncementId, String travelRoute, LocalDate travelDepartureDate, String travelBookingStatus) {
         public static ShipmentDto from(Shipment s) {
             return new ShipmentDto(
                 s.getId(), s.getTrackingNumber(),
@@ -78,7 +79,11 @@ public final class ApiDtos {
                 s.transportTrip() == null ? null : s.transportTrip().getId(),
                 s.transportTrip() == null ? null : s.transportTrip().getTripNumber(),
                 s.getCreatedAt(), s.getUpdatedAt(),
-                s.allRecipients().stream().map(RecipientDto::from).toList(), s.allPhotos().size());
+                s.allRecipients().stream().map(RecipientDto::from).toList(), s.allPhotos().size(),
+                s.getTravelAnnouncement() == null ? null : s.getTravelAnnouncement().getId(),
+                s.getTravelAnnouncement() == null ? null : s.getTravelAnnouncement().getOrigin() + " → " + s.getTravelAnnouncement().getDestination(),
+                s.getTravelAnnouncement() == null ? null : s.getTravelAnnouncement().getDepartureDate(),
+                s.getTravelBookingStatus() == null ? null : s.getTravelBookingStatus().name());
         }
     }
 
@@ -123,6 +128,17 @@ public final class ApiDtos {
                     s.allRecipients().stream().map(RecipientDto::from).toList(), s.allPhotos().size());
         }
     }
+
+    public record TravelAnnouncementDto(
+            UUID id, String postedByName, String origin, String destination,
+            LocalDate departureDate, LocalDate expectedArrivalDate,
+            String notes, java.time.Instant createdAt, UUID postedById,
+            BigDecimal totalCapacityKg, Integer numberOfLuggage,
+            BigDecimal approvedWeightKg, BigDecimal availableCapacityKg) {}
+
+    public record TravelBookingRequestDto(
+            UUID shipmentId, String trackingNumber, String senderName, BigDecimal weightKg,
+            UUID travelAnnouncementId, String route, LocalDate departureDate, String status) {}
 
     public record TripDto(
             UUID id, String tripNumber, UUID travelerId, String travelerName,

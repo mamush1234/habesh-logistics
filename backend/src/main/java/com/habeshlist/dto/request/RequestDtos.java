@@ -41,7 +41,7 @@ public final class RequestDtos {
             @NotBlank String destinationCountry,
             @NotBlank String destinationCity,
             String description,
-            @NotNull @DecimalMin("0.1") BigDecimal declaredWeightKg,
+            @NotNull @DecimalMin("0.1") @Digits(integer = 8, fraction = 2) BigDecimal declaredWeightKg,
             BigDecimal ratePerKg,
             @NotNull PickupMethod pickupMethod,
             String pickupAddress,
@@ -52,7 +52,8 @@ public final class RequestDtos {
             com.habeshlist.entity.enums.PackageType packageType, // null = OTHER (priced per kg)
             String photoDataUrl,
             @Valid java.util.List<@NotNull RecipientRequest> additionalRecipients,
-            @Size(max = 5) java.util.List<@NotBlank String> photoDataUrls) {}
+            @Size(max = 5) java.util.List<@NotBlank String> photoDataUrls,
+            UUID travelAnnouncementId) {}
 
      public record UpdatePaymentRequest(@NotNull com.habeshlist.entity.enums.PaymentStatus paymentStatus) {}
 
@@ -74,6 +75,21 @@ public final class RequestDtos {
             String notes) {}
 
     public record UpdateTripStatusRequest(@NotBlank String status) {}
+
+    public record CreateTravelAnnouncementRequest(
+            @NotBlank @Size(max = 100) String origin,
+            @NotBlank @Size(max = 100) String destination,
+            @NotNull @FutureOrPresent LocalDate departureDate,
+            LocalDate expectedArrivalDate,
+            @Size(max = 1000) String notes,
+            @NotNull @DecimalMin("0.1") @Digits(integer = 8, fraction = 2) BigDecimal totalCapacityKg,
+            @Min(0) Integer numberOfLuggage) {}
+
+    public record UpdateTravelCapacityRequest(
+            @NotNull @DecimalMin("0.1") @Digits(integer = 8, fraction = 2) BigDecimal totalCapacityKg,
+            @Min(0) Integer numberOfLuggage) {}
+
+    public record DecideTravelBookingRequest(@NotBlank @Pattern(regexp = "APPROVED|REJECTED") String status) {}
 
     public record CreateLuggageRequest(
             java.util.UUID tripId,

@@ -6,6 +6,8 @@ import { AdminApi, ShipmentApi, TripApi } from '../../api/endpoints';
 import { ShipmentStatusSelect } from '../../components/ShipmentStatusSelect';
 import { PackagePhoto } from '../../components/PackagePhoto';
 import { RecipientDetails } from '../../components/RecipientDetails';
+import { TravelCalendar } from '../../components/TravelCalendar';
+import { TravelRequests } from '../../components/TravelRequests';
 
 const EMPTY_TRIP = {
   travelerId: '', departureAirport: 'IAD', arrivalAirport: 'ADD',
@@ -49,6 +51,9 @@ export function AdminDashboard() {
       toast.success('Shipment removed');
       qc.invalidateQueries({ queryKey: ['shipments'] });
       qc.invalidateQueries({ queryKey: ['trips'] });
+      qc.invalidateQueries({ queryKey: ['travel-announcements'] });
+      qc.invalidateQueries({ queryKey: ['travel-requests'] });
+      qc.invalidateQueries({ queryKey: ['my-shipments'] });
     },
     onError: (e: any) => toast.error(e?.response?.data?.message || 'Failed to remove shipment'),
   });
@@ -104,6 +109,9 @@ export function AdminDashboard() {
           <button className="btn btn-brand" onClick={() => setShowForm(!showForm)} data-testid="admin-create-trip">+ New trip</button>
         </div>
       </div>
+
+      <TravelCalendar allowPosting />
+      <TravelRequests />
 
       {showUser && (
         <form className="card grid md:grid-cols-2 gap-3" data-testid="user-form"

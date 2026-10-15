@@ -83,6 +83,10 @@ export interface Shipment {
   assignedTravelerName?: string;
   createdAt: string;
   updatedAt: string;
+  travelAnnouncementId?: string | null;
+  travelRoute?: string | null;
+  travelDepartureDate?: string | null;
+  travelBookingStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | null;
 }
 
 export interface TrackingEvent {
@@ -157,6 +161,38 @@ export interface Trip {
   availableCapacityKg: string;
   luggage: Luggage[];
   directShipments: ShipmentSummary[];
+}
+
+export interface TravelAnnouncementRequest {
+  origin: string;
+  destination: string;
+  departureDate: string;
+  expectedArrivalDate?: string;
+  notes?: string;
+  totalCapacityKg: number;
+  numberOfLuggage?: number;
+}
+
+export interface TravelAnnouncement extends Omit<TravelAnnouncementRequest, 'totalCapacityKg' | 'numberOfLuggage'> {
+  id: string;
+  postedByName: string;
+  createdAt: string;
+  postedById: string;
+  totalCapacityKg: string | null;
+  numberOfLuggage: number | null;
+  approvedWeightKg: string;
+  availableCapacityKg: string | null;
+}
+
+export interface TravelBookingRequest {
+  shipmentId: string;
+  trackingNumber: string;
+  senderName: string;
+  weightKg: string;
+  travelAnnouncementId: string;
+  route: string;
+  departureDate: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
 }
 
 export interface ReferralStats {

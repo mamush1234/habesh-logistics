@@ -8,6 +8,8 @@ import { toast } from 'sonner';
 import { RecipientDetails } from '../../components/RecipientDetails';
 import { PackagePhoto } from '../../components/PackagePhoto';
 import { useAuth } from '../../auth/AuthContext';
+import { TravelCalendar } from '../../components/TravelCalendar';
+import { TravelRequests } from '../../components/TravelRequests';
 
 export function AgentDashboard() {
   const { user } = useAuth();
@@ -40,6 +42,9 @@ export function AgentDashboard() {
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold">Agent dashboard</h1>
+
+      <TravelCalendar allowPosting />
+      <TravelRequests />
 
       {stats.data && (
         <div className="grid md:grid-cols-4 gap-3" data-testid="agent-stats">

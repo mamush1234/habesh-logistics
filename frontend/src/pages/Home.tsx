@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { PublicApi } from '../api/endpoints';
 import { Package, MapPin, Phone, PlaneTakeoff, Shield } from 'lucide-react';
+import { TravelCalendar } from '../components/TravelCalendar';
 
 export function Home() {
   const info = useQuery({ queryKey: ['public-info'], queryFn: PublicApi.info });
@@ -48,6 +49,8 @@ export function Home() {
           </div>
         </div>
       </section>
+
+      <TravelCalendar />
 
       <section className="grid md:grid-cols-4 gap-4">
         {[

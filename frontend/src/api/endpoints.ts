@@ -1,7 +1,8 @@
 import { api } from './client';
 import type {
   AuthResponse, Shipment, PublicTracking, TrackingEvent,
-  Trip, Luggage, AdminStats, ReferralStats, PublicInfo, User, Invitation, InvitationInfo, RegisterRequest
+  Trip, Luggage, AdminStats, ReferralStats, PublicInfo, User, Invitation, InvitationInfo, RegisterRequest,
+  TravelAnnouncement, TravelAnnouncementRequest, TravelBookingRequest
 } from '../types';
 
 export const AuthApi = {
@@ -42,6 +43,17 @@ export const ShipmentApi = {
   photos: (id: string) => api.get<{ photos: string[] }>(`/api/shipments/${id}/photos`).then(r => r.data.photos),
   updatePhotos: (id: string, photoDataUrls: string[]) =>
     api.put<Shipment>(`/api/shipments/${id}/photos`, { photoDataUrls }).then(r => r.data),
+};
+
+export const TravelAnnouncementApi = {
+  list: () => api.get<TravelAnnouncement[]>('/api/travel-announcements').then(r => r.data),
+  create: (payload: TravelAnnouncementRequest) =>
+    api.post<TravelAnnouncement>('/api/travel-announcements', payload).then(r => r.data),
+  updateCapacity: (id: string, payload: { totalCapacityKg: number; numberOfLuggage?: number }) =>
+    api.put<TravelAnnouncement>(`/api/travel-announcements/${id}/capacity`, payload).then(r => r.data),
+  requests: () => api.get<TravelBookingRequest[]>('/api/travel-announcements/requests').then(r => r.data),
+  decide: (id: string, shipmentId: string, status: 'APPROVED' | 'REJECTED') =>
+    api.put<TravelBookingRequest>(`/api/travel-announcements/${id}/requests/${shipmentId}`, { status }).then(r => r.data),
 };
 
 export const TripApi = {

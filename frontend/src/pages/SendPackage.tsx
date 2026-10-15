@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
-import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { AdminApi, PublicApi, ShipmentApi } from '../api/endpoints';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { AdminApi, PublicApi, ShipmentApi, TravelAnnouncementApi } from '../api/endpoints';
 import { toast } from 'sonner';
 import { Check } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -23,6 +23,7 @@ interface Form {
   pickupTimeWindow: string;
   referralCode: string;
   senderId: string;
+  travelAnnouncementId: string;
 }
 
 const EMPTY: Form = {
@@ -37,17 +38,21 @@ const EMPTY: Form = {
   pickupAddress: '', pickupRequestedDate: '', pickupTimeWindow: '',
   referralCode: '',
   senderId: '',
+  travelAnnouncementId: '',
 };
 
 const STEPS = ['Destination', 'Package', 'Receiver', 'Delivery', 'Review'];
 
 export function SendPackage() {
   const { user } = useAuth();
+  const qc = useQueryClient();
+  const [params] = useSearchParams();
+  const travel = useQuery({ queryKey: ['travel-announcements'], queryFn: TravelAnnouncementApi.list, refetchInterval: 30_000 });
   const info = useQuery({ queryKey: ['public-info'], queryFn: PublicApi.info });
   const isAdmin = user?.role === 'ADMIN';
   const senders = useQuery({ queryKey: ['admin-users', 'SENDER'], queryFn: () => AdminApi.users('SENDER'), enabled: isAdmin });
   const [step, setStep] = useState(0);
-  const [form, setForm] = useState<Form>(EMPTY);
+  const [form, setForm] = useState<Form>(() => ({ ...EMPTY, travelAnnouncementId: params.get('travel') ?? '' }));
   const [loading, setLoading] = useState(false);
   const [preparingPhotos, setPreparingPhotos] = useState(false);
   const [created, setCreated] = useState<{ trackingNumber: string } | null>(null);
@@ -55,10 +60,18 @@ export function SendPackage() {
   const rate = Number(info.data?.defaultRatePerKg ?? 10);
   const pickupFee = form.pickupMethod === 'PICKUP' ? Number(info.data?.defaultPickupFee ?? 15) : 0;
   const weight = Number(form.declaredWeightKg || 0);
+  const validWeight = Number.isFinite(weight) && weight >= 0.1 && weight <= 99999999.99
+    && !/\.\d{3,}/.test(form.declaredWeightKg);
   const shippingFee = form.packageType === 'DOCUMENT' ? Number(info.data?.documentFee ?? 10)
     : form.packageType === 'MEDICINE' ? Number(info.data?.medicineFee ?? 15)
     : weight * rate;
   const total = shippingFee + pickupFee;
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const bookableTravel = travel.data?.filter(a => a.departureDate >= todayKey && a.totalCapacityKg != null) ?? [];
+  const selectedTravel = bookableTravel.find(a => a.id === form.travelAnnouncementId);
+  const invalidTravel = Boolean(form.travelAnnouncementId) && !selectedTravel;
+  const remainingAfterApproval = selectedTravel?.availableCapacityKg == null ? null : Number(selectedTravel.availableCapacityKg) - weight;
 
   function upd<K extends keyof Form>(k: K, v: Form[K]) { setForm(current => ({ ...current, [k]: v })); }
 
@@ -86,10 +99,19 @@ export function SendPackage() {
       toast.error('Select a sender');
       return;
     }
+    if (invalidTravel) {
+      toast.error('Select an available travel or choose no travel preference');
+      return;
+    }
+    if (!validWeight) {
+      toast.error('Enter a weight of at least 0.1 kg with no more than two decimal places');
+      return;
+    }
     setLoading(true);
     try {
       const payload = {
         senderId: isAdmin ? form.senderId : undefined,
+        travelAnnouncementId: form.travelAnnouncementId || undefined,
         destinationCountry: form.destinationCountry,
         destinationCity: form.destinationCity,
         description: form.description,
@@ -105,6 +127,8 @@ export function SendPackage() {
         additionalRecipients: form.recipients.slice(1),
       };
       const s = await ShipmentApi.create(payload);
+      qc.invalidateQueries({ queryKey: ['travel-requests'] });
+      qc.invalidateQueries({ queryKey: ['my-shipments'] });
       setCreated({ trackingNumber: s.trackingNumber });
       toast.success(`Shipment ${s.trackingNumber} created`);
     } catch (e: any) {
@@ -122,6 +146,7 @@ export function SendPackage() {
         </div>
         <h2 className="text-2xl font-bold">Shipment created</h2>
         <p className="text-ink-500">Save your tracking number — you’ll use it to pick up and track.</p>
+        {form.travelAnnouncementId && <p className="text-sm">Travel space requested. Your kilograms will be reserved only when the posting agent approves.</p>}
         <div className="text-4xl font-display font-bold">{created.trackingNumber}</div>
         <PrivateQr kind="tracking" value={created.trackingNumber} inline />
         <div className="flex justify-center gap-2">
@@ -151,6 +176,31 @@ export function SendPackage() {
       </ol>
 
       <div className="card mt-6 space-y-4" data-testid="send-form">
+        <div className="space-y-2 rounded-xl bg-ink-100 p-4">
+          <label className="label" htmlFor="shipment-travel">Choose travel (optional)</label>
+          <select id="shipment-travel" className="input" value={form.travelAnnouncementId}
+            onChange={e => upd('travelAnnouncementId', e.target.value)} disabled={loading}>
+            <option value="">No travel preference</option>
+            {invalidTravel && <option value={form.travelAnnouncementId}>Selected travel is unavailable</option>}
+            {bookableTravel.map(a => <option key={a.id} value={a.id}>
+              {a.origin} to {a.destination} - {a.departureDate} - {a.availableCapacityKg} kg available ({a.postedByName})
+            </option>)}
+          </select>
+          {travel.isPending && <p role="status" className="text-sm">Loading travel capacity...</p>}
+          {travel.isError && <p role="alert" className="text-sm text-red-700">
+            Could not load travel. <button type="button" className="underline" onClick={() => travel.refetch()}>Retry</button>
+          </p>}
+          {invalidTravel && <p role="alert" className="text-sm text-red-700">Choose an available travel or no travel preference.</p>}
+          {selectedTravel && <div className="text-sm space-y-1" aria-live="polite">
+            <p><strong>{selectedTravel.availableCapacityKg} kg available</strong> / {selectedTravel.totalCapacityKg} kg total
+              {selectedTravel.numberOfLuggage != null && <> &middot; {selectedTravel.numberOfLuggage} luggage pieces</>}
+            </p>
+            {weight > 0 && remainingAfterApproval != null && (remainingAfterApproval >= 0
+              ? <p>Your request: {weight} kg. If approved now, {remainingAfterApproval.toFixed(2)} kg would remain.</p>
+              : <p className="text-red-700">Your {weight} kg request exceeds current space by {(-remainingAfterApproval).toFixed(2)} kg. The agent cannot approve unless capacity becomes available.</p>)}
+            <p>Pending requests do not reserve space. Availability is checked again at approval.</p>
+          </div>}
+        </div>
         {step === 0 && (
           <>
             <h2 className="text-lg font-semibold">Destination</h2>
@@ -183,7 +233,8 @@ export function SendPackage() {
               </select>
             </div>
             <div><label className="label">Description</label><input className="input" placeholder="Clothing, gifts, documents…" value={form.description} onChange={e => upd('description', e.target.value)} data-testid="pkg-desc" /></div>
-            <div><label className="label">Estimated weight (kg)</label><input className="input" type="number" step="0.1" min="0.1" value={form.declaredWeightKg} onChange={e => upd('declaredWeightKg', e.target.value)} data-testid="pkg-weight" /></div>
+            <div><label className="label">Estimated weight (kg)</label><input className="input" type="number" step="0.01" min="0.1" max="99999999.99" value={form.declaredWeightKg} onChange={e => upd('declaredWeightKg', e.target.value)} data-testid="pkg-weight" /></div>
+            {form.declaredWeightKg && !validWeight && <p role="alert" className="text-sm text-red-700">Enter at least 0.1 kg with no more than two decimal places.</p>}
             <div>
               <label className="label">Package pictures (optional, up to 5) - {form.photoDataUrls.length}/5</label>
               <input className="input" type="file" accept="image/*" multiple
@@ -287,14 +338,14 @@ export function SendPackage() {
             <button className="btn btn-primary" onClick={next}
               disabled={
                 preparingPhotos ||
-                (step === 1 && !form.declaredWeightKg) ||
+                (step === 1 && !validWeight) ||
                 (step === 2 && form.recipients.some(r => !r.name.trim() || !r.phone.trim() || !r.city.trim()))
               }
               data-testid="step-next">
               Next
             </button>
           ) : (
-            <button className="btn btn-brand" onClick={submit} disabled={loading} data-testid="confirm-shipment">
+            <button className="btn btn-brand" onClick={submit} disabled={loading || invalidTravel} data-testid="confirm-shipment">
               {loading ? 'Creating…' : 'Create shipment'}
             </button>
           )}
