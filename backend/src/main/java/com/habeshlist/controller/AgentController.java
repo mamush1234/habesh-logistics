@@ -83,6 +83,7 @@ public class AgentController {
         AuthPrincipal p = SecurityUtils.currentUser();
         if (p.role() != Role.AGENT) throw new AccessDeniedException("Not an agent");
         return shipments.findAllByReferringAgentId(p.userId()).stream()
+                .filter(s -> com.habeshlist.security.ShipmentAccess.canRead(p, s))
                 .map(ApiDtos.ShipmentDto::from).toList();
     }
 }

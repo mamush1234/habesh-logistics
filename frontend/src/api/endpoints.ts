@@ -1,8 +1,9 @@
 import { api } from './client';
+import { z } from 'zod';
 import type {
   AuthResponse, Shipment, PublicTracking, TrackingEvent,
-  Trip, Luggage, AdminStats, ReferralStats, PublicInfo, User, Invitation, InvitationInfo, RegisterRequest,
-  TravelAnnouncement, TravelAnnouncementRequest, TravelBookingRequest
+  Trip, Luggage, AdminStats, ReferralStats, PublicInfo, PublicTravel, User, RegisterRequest,
+  TravelAnnouncement, TravelAnnouncementRequest, TravelBookingRequest, QueuePackage, PackageNotification, SenderContact
 } from '../types';
 
 export const AuthApi = {
@@ -10,13 +11,19 @@ export const AuthApi = {
     api.post<AuthResponse>('/api/auth/login', { email, password }).then(r => r.data),
   register: (data: RegisterRequest) =>
     api.post<AuthResponse>('/api/auth/register', data).then(r => r.data),
-  invitation: (token: string) => api.post<InvitationInfo>('/api/auth/invitation', { token }).then(r => r.data),
   me: () => api.get<User>('/api/me').then(r => r.data),
   changePassword: (currentPassword: string, newPassword: string) =>
     api.put('/api/me/password', { currentPassword, newPassword }).then(r => r.data),
 };
 
+const publicTravelSchema = z.array(z.object({
+  id: z.string().uuid(), origin: z.string(), destination: z.string(),
+  departureDate: z.string(), availableCapacityKg: z.number().positive(),
+}));
+
 export const PublicApi = {
+  travel: (): Promise<PublicTravel[]> => api.get<unknown>('/api/public/travel')
+    .then(r => publicTravelSchema.parse(r.data)),
   info: () => api.get<PublicInfo>('/api/public/info').then(r => r.data),
   track: (tn: string) => api.get<PublicTracking>(`/api/shipments/tracking/${encodeURIComponent(tn)}`).then(r => r.data),
 };
@@ -95,11 +102,6 @@ export const PickupApi = {
 };
 
 export const AdminApi = {
-  invitations: () => api.get<Invitation[]>('/api/admin/invitations').then(r => r.data),
-  invite: (email: string, role: 'SENDER' | 'TRAVELER' | 'AGENT') =>
-    api.post<{ invitation: Invitation; token: string; invitationUrl: string; emailSent: boolean; deliveryMessage: string }>(
-      '/api/admin/invitations', { email, role }).then(r => r.data),
-  revokeInvitation: (id: string) => api.delete(`/api/admin/invitations/${id}`).then(r => r.data),
   updateAccess: (id: string, active: boolean) =>
     api.put<User>(`/api/admin/users/${id}/access`, { active }).then(r => r.data),
   agentCodes: () => api.get<{ name: string; referralCode: string }[]>('/api/admin/agent-codes').then(r => r.data),
@@ -112,6 +114,14 @@ export const AdminApi = {
 export const AgentApi = {
   myStats: () => api.get<ReferralStats>('/api/agents/me/referrals').then(r => r.data),
   myReferrals: () => api.get<Shipment[]>('/api/agents/me/referred-shipments').then(r => r.data),
+};
+
+export const PackageQueueApi = {
+  list: () => api.get<QueuePackage[]>('/api/package-queue').then(r => r.data),
+  proof: (id: string) => api.get<{ proof: string }>(`/api/package-queue/${id}/payment-proof`).then(r => r.data.proof),
+  sender: (id: string) => api.get<SenderContact>(`/api/package-queue/${id}/sender`).then(r => r.data),
+  notifications: () => api.get<PackageNotification[]>('/api/package-queue/notifications').then(r => r.data),
+  markRead: (id: string) => api.put(`/api/package-queue/notifications/${id}/read`).then(() => undefined),
 };
 
 export const ScanApi = {

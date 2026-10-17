@@ -10,6 +10,16 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/public")
 public class PublicController {
+    private final com.habeshlist.service.MarketplaceService travel;
+
+    public PublicController(com.habeshlist.service.MarketplaceService travel) {
+        this.travel = travel;
+    }
+
+    @GetMapping("/travel")
+    public java.util.List<com.habeshlist.dto.ApiDtos.PublicTravelDto> travel() {
+        return travel.publicTrips();
+    }
 
     @Value("${app.alexandria.address}")
     private String alexandriaAddress;

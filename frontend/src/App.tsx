@@ -15,28 +15,38 @@ import { AdminLuggage } from './pages/admin/Luggage';
 import { AdminAccess } from './pages/admin/Access';
 import { Account } from './pages/Account';
 import { useAuth } from './auth/AuthContext';
+import { PackageQueue } from './pages/PackageQueue';
+import { Marketplace, MarketRequestForm } from './pages/Marketplace';
+import { MarketplaceRequest } from './pages/MarketplaceRequest';
 
 export default function App() {
   const { user } = useAuth();
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+        <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/track" element={<ProtectedRoute><Track /></ProtectedRoute>} />
         <Route path="/track/:trackingNumber" element={<ProtectedRoute><Track /></ProtectedRoute>} />
-        <Route path="/send" element={<ProtectedRoute roles={['SENDER', 'ADMIN']}><SendPackage /></ProtectedRoute>} />
+        <Route path="/send" element={<ProtectedRoute roles={['SENDER']}><MarketRequestForm /></ProtectedRoute>} />
+        <Route path="/legacy-send" element={<ProtectedRoute roles={['SENDER', 'ADMIN']}><SendPackage /></ProtectedRoute>} />
+        <Route path="/marketplace" element={<ProtectedRoute><Marketplace /></ProtectedRoute>} />
+        <Route path="/marketplace/requests/:id" element={<ProtectedRoute><MarketplaceRequest /></ProtectedRoute>} />
         <Route path="/dashboard" element={
           user?.role === 'ADMIN' ? <Navigate to="/admin" /> :
           user?.role === 'TRAVELER' ? <Navigate to="/traveler" /> :
           user?.role === 'AGENT' ? <Navigate to="/agent" /> :
-          <ProtectedRoute><SenderDashboard /></ProtectedRoute>
+          <ProtectedRoute><Marketplace myPackagesOnly /></ProtectedRoute>
         } />
-        <Route path="/my-shipments" element={<ProtectedRoute><SenderDashboard /></ProtectedRoute>} />
+        <Route path="/my-shipments" element={<ProtectedRoute roles={['SENDER']}><Marketplace myPackagesOnly /></ProtectedRoute>} />
+        <Route path="/legacy-shipments" element={<ProtectedRoute><SenderDashboard /></ProtectedRoute>} />
         <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
-        <Route path="/traveler" element={<ProtectedRoute roles={['TRAVELER','ADMIN']}><TravelerDashboard /></ProtectedRoute>} />
+        <Route path="/traveler" element={<ProtectedRoute><Marketplace tripsOnly /></ProtectedRoute>} />
+        <Route path="/legacy-trips" element={<ProtectedRoute roles={['TRAVELER','ADMIN']}><TravelerDashboard /></ProtectedRoute>} />
         <Route path="/agent" element={<ProtectedRoute roles={['AGENT','ADMIN']}><AgentDashboard /></ProtectedRoute>} />
+        <Route path="/package-queue" element={<Navigate to="/marketplace" replace />} />
+        <Route path="/legacy-packages" element={<ProtectedRoute roles={['ADMIN']}><PackageQueue /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute roles={['ADMIN']}><AdminDashboard /></ProtectedRoute>} />
         <Route path="/admin/access" element={<ProtectedRoute roles={['ADMIN']}><AdminAccess /></ProtectedRoute>} />
         <Route path="/admin/luggage" element={<ProtectedRoute roles={['ADMIN']}><AdminLuggage /></ProtectedRoute>} />

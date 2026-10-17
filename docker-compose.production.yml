@@ -33,13 +33,6 @@ services:
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:?Set INITIAL_ADMIN_EMAIL}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?Set a strong INITIAL_ADMIN_PASSWORD}
       CORS_ORIGINS: https://${APP_DOMAIN:?Set APP_DOMAIN}
-      APP_WEBSITE_URL: https://${APP_DOMAIN:?Set APP_DOMAIN}
-      INVITATION_EMAIL_ENABLED: ${INVITATION_EMAIL_ENABLED:-false}
-      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USERNAME: ${SMTP_USERNAME:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-habeshalist@gmail.com}
     networks: [database, web]
 
   frontend:

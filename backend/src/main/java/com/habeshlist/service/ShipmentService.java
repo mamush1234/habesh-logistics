@@ -32,6 +32,7 @@ public class ShipmentService {
     private final CommissionRepository commissions;
     private final TrackingEventService trackingEventService;
     private final TravelAnnouncementService travelAnnouncements;
+    private final PackageNotificationRepository notificationRepository;
 
     @Value("${app.pricing.default-rate-per-kg}")
     private BigDecimal defaultRate;
@@ -47,7 +48,8 @@ public class ShipmentService {
     public ShipmentService(ShipmentRepository shipments, RecipientRepository recipients,
                            UserRepository users, AgentProfileRepository agentProfiles,
                            PickupRepository pickups, CommissionRepository commissions,
-                           TrackingEventService trackingEventService, TravelAnnouncementService travelAnnouncements) {
+                           TrackingEventService trackingEventService, TravelAnnouncementService travelAnnouncements,
+                           PackageNotificationRepository notificationRepository) {
         this.shipments = shipments;
         this.recipients = recipients;
         this.users = users;
@@ -56,6 +58,7 @@ public class ShipmentService {
         this.commissions = commissions;
         this.trackingEventService = trackingEventService;
         this.travelAnnouncements = travelAnnouncements;
+        this.notificationRepository = notificationRepository;
     }
 
     /** Initialize tracking sequence based on existing shipments; call at app startup. */
@@ -135,7 +138,6 @@ public class ShipmentService {
                 .pickupRequestedDate(req.pickupRequestedDate())
                 .status(ShipmentStatus.CREATED)
                 .referringAgent(referringAgent)
-                .assignedAgent(referringAgent)
                 .build();
         s.getAdditionalRecipients().addAll(additionalRecipients);
         s.replacePhotos(photos);
@@ -244,6 +246,7 @@ public class ShipmentService {
         if (s.getLuggage() != null || s.getTrip() != null) {
             throw new BadRequestException("Shipment is already assigned to luggage or a trip; unassign it first");
         }
+        notificationRepository.deleteAllByShipmentId(shipmentId);
         shipments.delete(s);
     }
 
@@ -305,8 +308,9 @@ public class ShipmentService {
                     .filter(s -> ShipmentAccess.canRead(p, s)).toList();
             case TRAVELER -> java.util.stream.Stream.concat(
                             shipments.findAll().stream()
-                                    .filter(s -> s.isCarriedBy(p.userId())),
-                            shipments.findAllByAssignedTravelerId(p.userId()).stream())
+                                    .filter(s -> ShipmentAccess.canRead(p, s)),
+                            shipments.findAllByAssignedTravelerId(p.userId()).stream()
+                                    .filter(s -> ShipmentAccess.canRead(p, s)))
                     .distinct().toList();
         };
     }

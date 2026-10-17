@@ -27,6 +27,7 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Shipment s where s.id = :id")
     Optional<Shipment> findForUpdate(UUID id);
+
     List<Shipment> findAllByLuggageIsNullAndStatusIn(List<ShipmentStatus> statuses);
     long countByStatus(ShipmentStatus status);
 

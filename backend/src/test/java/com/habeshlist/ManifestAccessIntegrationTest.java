@@ -25,6 +25,7 @@ class ManifestAccessIntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper om;
     @Autowired ScanAuditRepository audits;
+    @Autowired com.habeshlist.repository.ShipmentRepository shipments;
 
     private JsonNode postJson(String path, String token, Object body) throws Exception {
         return om.readTree(mvc.perform(post(path).header("Authorization", "Bearer " + token)
@@ -54,10 +55,14 @@ class ManifestAccessIntegrationTest {
     }
 
     private JsonNode shipment(String admin, String name) throws Exception {
-        return postJson("/api/shipments", admin, Map.of("recipient", Map.of("name", name,
+        JsonNode response = postJson("/api/shipments", admin, Map.of("recipient", Map.of("name", name,
                 "phone", "12345678", "city", "Addis Ababa", "address", name + " address", "notes", name + " notes"),
                 "destinationCountry", "Ethiopia", "destinationCity", "Addis Ababa",
                 "description", name + " description", "declaredWeightKg", 2, "pickupMethod", "ALEXANDRIA_DROPOFF"));
+        // These tests exercise pre-queue manifest access; queue access has its own integration suite.
+        var shipment = shipments.findById(java.util.UUID.fromString(response.get("id").asText())).orElseThrow();
+        shipment.setQueueStatus(null);
+        return response;
     }
 
     @Test

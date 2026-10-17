@@ -121,6 +121,7 @@ public class ShipmentController {
         if (p.role() == Role.SENDER) throw new AccessDeniedException("Not allowed");
         if (p.role() != Role.ADMIN) {
             Shipment target = shipmentService.getById(id);
+            ShipmentAccess.assertCanRead(p, target);
             boolean assigned = (p.role() == Role.AGENT
                     && ((target.getAssignedAgent() != null && target.getAssignedAgent().getId().equals(p.userId()))
                         || (target.getLuggage() != null

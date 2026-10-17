@@ -64,6 +64,17 @@ public class TravelAnnouncementService {
                 .map(this::toDto).toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<ApiDtos.PublicTravelDto> publicTravel() {
+        return announcements.findAllByOrderByDepartureDateAscCreatedAtAsc().stream()
+                .filter(a -> !a.getDepartureDate().isBefore(LocalDate.now()) && a.getPostedBy().isActive()
+                        && a.getTotalCapacityKg() != null)
+                .map(a -> new ApiDtos.PublicTravelDto(a.getId(), a.getOrigin(), a.getDestination(),
+                        a.getDepartureDate(), a.getTotalCapacityKg()
+                        .subtract(shipments.travelWeight(a.getId(), TravelBookingStatus.APPROVED))))
+                .filter(a -> a.availableCapacityKg().signum() > 0).limit(6).toList();
+    }
+
     private ApiDtos.TravelAnnouncementDto toDto(TravelAnnouncement announcement) {
         var author = announcement.getPostedBy();
         BigDecimal approved = shipments.travelWeight(announcement.getId(), TravelBookingStatus.APPROVED);
@@ -163,8 +174,9 @@ public class TravelAnnouncementService {
 
     private ApiDtos.TravelBookingRequestDto toRequestDto(Shipment shipment) {
         var announcement = shipment.getTravelAnnouncement();
+        boolean reveal = com.habeshlist.security.ShipmentAccess.canRead(SecurityUtils.currentUser(), shipment);
         return new ApiDtos.TravelBookingRequestDto(shipment.getId(), shipment.getTrackingNumber(),
-                shipment.getSender().getFirstName() + " " + shipment.getSender().getLastName(),
+                reveal ? shipment.getSender().getFirstName() + " " + shipment.getSender().getLastName() : "Hidden until service fee proof is uploaded",
                 shipment.getDeclaredWeightKg(), announcement.getId(),
                 announcement.getOrigin() + " → " + announcement.getDestination(),
                 announcement.getDepartureDate(), shipment.getTravelBookingStatus().name());

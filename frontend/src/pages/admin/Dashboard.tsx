@@ -102,10 +102,12 @@ export function AdminDashboard() {
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Admin dashboard</h1>
         <div className="flex gap-2">
-          <Link className="btn btn-ghost" to="/admin/access">Private access</Link>
+          <Link className="btn btn-ghost" to="/admin/access">Account access</Link>
           <Link className="btn btn-ghost" to="/admin/luggage">Luggage consolidation</Link>
           <button className="btn btn-ghost" onClick={() => setShowUser(!showUser)} data-testid="admin-create-user">+ New user</button>
-          <Link className="btn btn-ghost" to="/send" data-testid="admin-create-shipment">+ New shipment</Link>
+          <Link className="btn btn-ghost" to="/legacy-send" data-testid="admin-create-shipment">+ Operational shipment</Link>
+          <Link className="btn btn-ghost" to="/marketplace">All delivery requests</Link>
+          <Link className="btn btn-ghost" to="/legacy-packages">Legacy package archive</Link>
           <button className="btn btn-brand" onClick={() => setShowForm(!showForm)} data-testid="admin-create-trip">+ New trip</button>
         </div>
       </div>

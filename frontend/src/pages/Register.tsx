@@ -1,74 +1,65 @@
 import { useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
-import { useNavigate, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { isAxiosError } from 'axios';
 import { toast } from 'sonner';
-import { AuthApi } from '../api/endpoints';
+import type { RegisterRequest } from '../types';
 
 export function Register() {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [token] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('invite') ?? '');
-  const invitation = useQuery({
-    queryKey: ['invitation'],
-    queryFn: () => AuthApi.invitation(token),
-    enabled: token.length === 48,
-    retry: false,
-    staleTime: 0,
-    gcTime: 0,
+  const [params] = useSearchParams();
+  const requestedNext = params.get('next');
+  const next = requestedNext?.startsWith('/') && !requestedNext.startsWith('//') ? requestedNext : '/dashboard';
+  const [form, setForm] = useState<RegisterRequest>({
+    firstName: '', lastName: '', email: '', phone: '', password: '',
+    role: params.get('role') === 'TRAVELER' ? 'TRAVELER' : 'SENDER',
   });
-  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', password: '' });
   const [loading, setLoading] = useState(false);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!invitation.data) return;
+  async function onSubmit(event: React.FormEvent) {
+    event.preventDefault();
     setLoading(true);
     try {
-      await register({ ...form, email: invitation.data.email, invitationToken: token });
-      window.history.replaceState(null, '', '/register');
-      toast.success('Account created');
-      navigate('/dashboard', { replace: true });
+      await register(form);
+      toast.success('Welcome to HabeshaList! Your account is ready.');
+      navigate(next, { replace: true });
     } catch (error: unknown) {
-      const message: unknown = isAxiosError(error) ? error.response?.data?.message : undefined;
-      toast.error(typeof message === 'string' ? message : 'Could not create account. Contact your administrator.');
+      toast.error(isAxiosError<{ message?: string }>(error)
+        ? error.response?.data?.message || 'Could not create your account. Please try again.'
+        : 'Could not create your account. Please try again.');
     } finally {
       setLoading(false);
     }
   }
 
-  if (token.length !== 48) return <div className="card max-w-lg mx-auto">
-    <h1 className="text-2xl font-bold">Invitation required</h1>
-    <p className="mt-3">Registration is private. Ask your administrator for a personal invitation link.</p>
-    <Link to="/login" className="btn btn-ghost mt-3">Login</Link>
-  </div>;
-  if (invitation.isPending) return <p role="status">Checking invitation...</p>;
-  if (invitation.isError) return <div className="card max-w-lg mx-auto" role="alert">
-    <h1 className="text-2xl font-bold">Invitation unavailable</h1>
-    <p className="mt-3">This invitation may be expired, revoked or already used. Contact your administrator.</p>
-    <button type="button" className="btn btn-ghost mt-3" onClick={() => invitation.refetch()}>Retry</button>
-    <Link to="/login" className="btn btn-ghost mt-3">Login</Link>
-  </div>;
-
   return <div className="card max-w-lg mx-auto">
-    <h1 className="text-2xl font-bold">Accept invitation</h1>
-    <p className="mt-3">{invitation.data.email} - {invitation.data.role}</p>
-    <form onSubmit={onSubmit} className="mt-5 grid grid-cols-2 gap-3">
-      {(['firstName', 'lastName', 'phone', 'password'] as const).map(field => <div key={field}>
+    <h1 className="text-3xl font-bold">Join the journey</h1>
+    <p className="mt-2 text-ink-500">Create an account to send packages or travel with a little extra purpose.</p>
+    <form onSubmit={onSubmit} className="mt-6 grid sm:grid-cols-2 gap-4">
+      <div className="sm:col-span-2">
+        <label className="label" htmlFor="register-role">I want to</label>
+        <select id="register-role" className="input" value={form.role}
+          onChange={event => setForm(current => ({ ...current, role: event.target.value === 'TRAVELER' ? 'TRAVELER' : 'SENDER' }))}>
+          <option value="SENDER">Send packages</option><option value="TRAVELER">Travel and carry packages</option>
+        </select>
+      </div>
+      {(['firstName', 'lastName', 'email', 'phone', 'password'] as const).map(field => <div
+        key={field} className={field === 'email' || field === 'password' ? 'sm:col-span-2' : ''}>
         <label className="label" htmlFor={`register-${field}`}>
-          {field === 'firstName' ? 'First name' : field === 'lastName' ? 'Last name' : field === 'phone' ? 'Phone' : 'Password (at least 12 characters)'}
+          {{ firstName: 'First name', lastName: 'Last name', email: 'Email', phone: 'Phone (optional)', password: 'Password (at least 12 characters)' }[field]}
         </label>
-        <input id={`register-${field}`} className="input" type={field === 'password' ? 'password' : 'text'}
-          autoComplete={field === 'password' ? 'new-password' : undefined}
-          minLength={field === 'password' ? 12 : undefined} maxLength={field === 'password' ? 72 : undefined}
-          value={form[field]} onChange={e => setForm(current => ({ ...current, [field]: e.target.value }))}
+        <input id={`register-${field}`} className="input" type={field === 'password' ? 'password' : field === 'email' ? 'email' : field === 'phone' ? 'tel' : 'text'}
+          autoComplete={{ firstName: 'given-name', lastName: 'family-name', email: 'email', phone: 'tel', password: 'new-password' }[field]}
+          minLength={field === 'password' ? 12 : undefined} maxLength={field === 'password' ? 72 : 255}
+          value={form[field]} onChange={event => setForm(current => ({ ...current, [field]: event.target.value }))}
           required={field !== 'phone'} data-testid={`register-${field}`} />
       </div>)}
-      <button className="btn btn-brand col-span-2" disabled={loading} data-testid="register-submit">
-        {loading ? 'Creating...' : 'Create account'}
+      <button className="btn btn-primary sm:col-span-2" disabled={loading} data-testid="register-submit">
+        {loading ? 'Creating account...' : 'Create account'}
       </button>
     </form>
-    <p className="text-sm mt-5">Already registered? <Link to="/login" className="underline">Login</Link></p>
+    <p className="text-sm mt-5">Already a member? <Link to={`/login?next=${encodeURIComponent(next)}`} className="underline">Log in</Link></p>
+    <p className="text-xs text-ink-500 mt-3">Agent accounts are created by an administrator.</p>
   </div>;
 }

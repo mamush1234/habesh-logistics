@@ -20,6 +20,11 @@ public class ShipmentAccess {
     }
 
     public static boolean canRead(AuthPrincipal user, Shipment shipment) {
+        if (shipment.getQueueStatus() != null && user.role() != Role.ADMIN && user.role() != Role.SENDER) {
+            return shipment.getQueueStatus() == com.habeshlist.entity.enums.PackageQueueStatus.PAYMENT_UPLOADED
+                    && shipment.getQueueClaimant() != null
+                    && shipment.getQueueClaimant().getId().equals(user.userId());
+        }
         return switch (user.role()) {
             case ADMIN -> true;
             case SENDER -> shipment.getSender().getId().equals(user.userId());

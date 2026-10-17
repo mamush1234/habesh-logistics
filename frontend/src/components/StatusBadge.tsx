@@ -18,6 +18,11 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
   DELIVERED:                 { label: 'Delivered',               cls: 'badge-green' },
   CANCELLED:                 { label: 'Cancelled',               cls: 'badge-red' },
   ON_HOLD:                   { label: 'On Hold',                 cls: 'badge-red' },
+  QUEUED:                    { label: 'Available',               cls: 'badge-blue' },
+  RESERVED:                  { label: 'Under Review',            cls: 'badge-amber' },
+  APPROVED:                  { label: 'Awaiting Service Fee',     cls: 'badge-amber' },
+  PAYMENT_UPLOADED:          { label: 'Confirmation Uploaded',    cls: 'badge-green' },
+  LEGACY:                    { label: 'Legacy',                  cls: 'badge-gray' },
   // trip
   OPEN:                      { label: 'Open',                    cls: 'badge-gray' },
   FILLING:                   { label: 'Filling',                 cls: 'badge-amber' },

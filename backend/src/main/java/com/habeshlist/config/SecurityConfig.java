@@ -44,7 +44,9 @@ public class SecurityConfig {
                             org.springframework.http.HttpStatus.UNAUTHORIZED)))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(org.springframework.http.HttpMethod.POST,
-                        "/api/auth/login", "/api/auth/register", "/api/auth/invitation").permitAll()
+                        "/api/auth/login", "/api/auth/register").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.GET,
+                        "/api/public/info", "/api/public/travel").permitAll()
                 .requestMatchers("/error").permitAll()
                 .requestMatchers("/api/shipments/guest").denyAll()
                 .requestMatchers("/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").hasRole("ADMIN")

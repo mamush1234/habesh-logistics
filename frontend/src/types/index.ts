@@ -23,20 +23,15 @@ export interface RegisterRequest {
   email: string;
   phone?: string;
   password: string;
-  invitationToken: string;
+  role: 'SENDER' | 'TRAVELER';
 }
 
-export interface InvitationInfo {
-  email: string;
-  role: 'SENDER' | 'TRAVELER' | 'AGENT';
-  expiresAt: string;
-}
-
-export interface Invitation extends InvitationInfo {
+export interface PublicTravel {
   id: string;
-  createdAt: string;
-  usedAt: string | null;
-  revokedAt: string | null;
+  origin: string;
+  destination: string;
+  departureDate: string;
+  availableCapacityKg: number;
 }
 
 export interface Recipient {
@@ -87,6 +82,47 @@ export interface Shipment {
   travelRoute?: string | null;
   travelDepartureDate?: string | null;
   travelBookingStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | null;
+  queueStatus?: PackageQueueStatus | null;
+  queueExpiresAt?: string | null;
+}
+
+export type PackageQueueStatus = 'QUEUED' | 'RESERVED' | 'APPROVED' | 'PAYMENT_UPLOADED';
+
+export interface QueuePackage {
+  id: string;
+  trackingNumber: string;
+  destinationCountry: string;
+  destinationCity: string;
+  description: string | null;
+  packageType: string;
+  weightKg: number;
+  shipmentPrice: number;
+  serviceFee: number | null;
+  shipmentStatus: string;
+  queueStatus: PackageQueueStatus | 'LEGACY';
+  claimantId: string | null;
+  claimantName: string | null;
+  expiresAt: string | null;
+  serverTime: string;
+  createdAt: string;
+  paymentUploadedAt: string | null;
+  photos: string[];
+}
+
+export interface PackageNotification {
+  id: string;
+  shipmentId: string | null;
+  requestId: string | null;
+  message: string;
+  createdAt: string;
+  readAt: string | null;
+}
+
+export interface SenderContact {
+  name: string;
+  email: string;
+  phone: string | null;
+  pickupAddress: string | null;
 }
 
 export interface TrackingEvent {

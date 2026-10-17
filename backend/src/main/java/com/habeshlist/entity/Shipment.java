@@ -151,6 +151,24 @@ public class Shipment {
     @Column(length = 32)
     private TravelBookingStatus travelBookingStatus;
 
+    @Enumerated(EnumType.STRING)
+    @Column(length = 32)
+    private PackageQueueStatus queueStatus;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "queue_claimant_id")
+    private User queueClaimant;
+
+    private Instant queueExpiresAt;
+
+    @Column(precision = 10, scale = 2)
+    private BigDecimal serviceFee;
+
+    @Column(columnDefinition = "text")
+    private String servicePaymentProof;
+
+    private Instant servicePaymentUploadedAt;
+
     public Trip transportTrip() {
         return luggage == null ? trip : luggage.getTrip();
     }

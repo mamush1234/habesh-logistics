@@ -13,17 +13,19 @@ export function SenderDashboard() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">My shipments</h1>
-        <Link to="/send" className="btn btn-brand"><Package className="w-4 h-4" /> New shipment</Link>
+        <h1 className="text-3xl font-bold">Legacy operational shipments</h1>
+        <Link to="/marketplace" className="btn btn-brand"><Package className="w-4 h-4" /> Delivery marketplace</Link>
       </div>
-
-      <TravelCalendar />
+      <p className="text-sm text-ink-500">Existing shipment records remain here. New requests and offers are in the delivery marketplace.</p>
 
       {q.isLoading && <p className="text-ink-500">Loading…</p>}
+      {q.isError && <p role="alert" className="text-sm text-red-700">
+        Could not load your packages. <button type="button" className="underline" onClick={() => q.refetch()}>Retry</button>
+      </p>}
       {q.data && q.data.length === 0 && (
         <div className="card text-center py-10">
           <p className="text-ink-500">No shipments yet.</p>
-          <Link to="/send" className="btn btn-brand mt-3 inline-flex">Send your first package</Link>
+          <Link to="/send" className="btn btn-brand mt-3 inline-flex">Post a delivery request</Link>
         </div>
       )}
 
@@ -39,11 +41,21 @@ export function SenderDashboard() {
               <StatusBadge value={s.status} />
             </div>
             <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
-              <div><div className="text-ink-500 text-xs">To</div><div className="font-semibold">{s.destinationCity}</div></div>
+              <div><div className="text-ink-500 text-xs">To</div><div className="font-semibold">{s.destinationCity}, {s.destinationCountry}</div></div>
+              <div><div className="text-ink-500 text-xs">Package type</div><div className="font-semibold">{s.packageType}</div></div>
               <div><div className="text-ink-500 text-xs">Weight</div><div className="font-semibold">{s.declaredWeightKg} kg</div></div>
               <div><div className="text-ink-500 text-xs">Total</div><div className="font-semibold">${s.totalAmount}</div></div>
+              <div><div className="text-ink-500 text-xs">Posted</div><div className="font-semibold">{new Date(s.createdAt).toLocaleString()}</div></div>
             </div>
           </Link>
+            <div className="mt-3 text-sm space-y-1">
+              <p>Delivery method: {s.pickupMethod === 'PICKUP' ? 'Pickup' : 'Alexandria drop-off'}</p>
+              {s.pickupMethod === 'PICKUP' && s.pickupAddress && <p>Pickup address: {s.pickupAddress}</p>}
+              {s.pickupMethod === 'PICKUP' && s.pickupRequestedDate && <p>Requested pickup: {new Date(`${s.pickupRequestedDate}T00:00:00`).toLocaleDateString()}</p>}
+            </div>
+            {s.queueStatus && <p className="mt-3 text-sm">Package queue: <StatusBadge value={s.queueStatus} />
+              {s.queueStatus === 'RESERVED' && s.queueExpiresAt && <> &middot; Review deadline: {new Date(s.queueExpiresAt).toLocaleTimeString()}</>}
+            </p>}
             {s.travelAnnouncementId && <div className="mt-3 rounded-xl bg-ink-100 p-3 text-sm space-y-1">
               <p className="font-semibold">Requested travel: {s.travelRoute}</p>
               <p>{s.travelDepartureDate && new Date(`${s.travelDepartureDate}T00:00:00`).toLocaleDateString()}
@@ -56,6 +68,8 @@ export function SenderDashboard() {
             <div className="mt-3">
               <RecipientDetails name={s.recipient.name} phone={s.recipient.phone} recipients={s.recipients} description={s.description} />
             </div>
+
+            <TravelCalendar />
             <div className="mt-4">
               <PackagePhoto id={s.id} trackingNumber={s.trackingNumber} hasPhoto={!!s.hasPhoto} senderId={s.senderId} />
             </div>

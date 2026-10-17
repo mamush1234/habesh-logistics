@@ -151,7 +151,7 @@ export function SendPackage() {
         <PrivateQr kind="tracking" value={created.trackingNumber} inline />
         <div className="flex justify-center gap-2">
           <Link className="btn btn-brand" to={`/track/${created.trackingNumber}`}>Track now</Link>
-          <Link className="btn btn-ghost" to="/my-shipments">My shipments</Link>
+          <Link className="btn btn-ghost" to="/legacy-shipments">View operational shipments</Link>
         </div>
       </div>
     );
@@ -233,6 +233,7 @@ export function SendPackage() {
               </select>
             </div>
             <div><label className="label">Description</label><input className="input" placeholder="Clothing, gifts, documents…" value={form.description} onChange={e => upd('description', e.target.value)} data-testid="pkg-desc" /></div>
+            <p className="text-xs text-ink-500">This creates a legacy operational shipment for administrator assignment, not a marketplace request. Do not include contact details in the description or package pictures.</p>
             <div><label className="label">Estimated weight (kg)</label><input className="input" type="number" step="0.01" min="0.1" max="99999999.99" value={form.declaredWeightKg} onChange={e => upd('declaredWeightKg', e.target.value)} data-testid="pkg-weight" /></div>
             {form.declaredWeightKg && !validWeight && <p role="alert" className="text-sm text-red-700">Enter at least 0.1 kg with no more than two decimal places.</p>}
             <div>

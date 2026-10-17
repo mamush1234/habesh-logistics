@@ -4,18 +4,6 @@ server:
     context-path: /
 
 spring:
-  mail:
-    host: ${SMTP_HOST:smtp.gmail.com}
-    port: ${SMTP_PORT:587}
-    username: ${SMTP_USERNAME:}
-    password: ${SMTP_PASSWORD:}
-    properties:
-      mail.smtp.auth: true
-      mail.smtp.starttls.enable: true
-      mail.smtp.starttls.required: true
-      mail.smtp.connectiontimeout: 10000
-      mail.smtp.timeout: 10000
-      mail.smtp.writetimeout: 10000
   application:
     name: habesh-logistics
   datasource:
@@ -37,10 +25,6 @@ spring:
     locations: classpath:db/migration
 
 app:
-  invitations:
-    email-enabled: ${INVITATION_EMAIL_ENABLED:false}
-    from: ${SMTP_FROM:habeshalist@gmail.com}
-    website-url: ${APP_WEBSITE_URL:http://localhost:3000}
   demo-data-enabled: ${DEMO_DATA_ENABLED:false}
   initial-admin:
     email: ${INITIAL_ADMIN_EMAIL:}

@@ -6,7 +6,7 @@ export function ProtectedRoute({ children, roles }: { children: React.ReactNode;
   const { user, initializing } = useAuth();
   const loc = useLocation();
   if (initializing) return <p role="status">Verifying your session...</p>;
-  if (!user) return <Navigate to={`/login?next=${encodeURIComponent(loc.pathname)}`} replace />;
+  if (!user) return <Navigate to={`/login?next=${encodeURIComponent(loc.pathname + loc.search + loc.hash)}`} replace />;
   if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
   return <>{children}</>;
 }

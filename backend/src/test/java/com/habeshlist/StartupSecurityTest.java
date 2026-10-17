@@ -21,7 +21,7 @@ class StartupSecurityTest {
         DataSeeder seeder = new DataSeeder(auth, users, mock(ShipmentService.class), mock(TripService.class),
                 mock(ShipmentRepository.class), mock(TripRepository.class), mock(LuggageRepository.class),
                 mock(LuggageService.class), mock(RecipientRepository.class), mock(AgentProfileRepository.class),
-                mock(CommissionRepository.class), mock(TrackingEventService.class),
+                mock(CommissionRepository.class), mock(TrackingEventService.class), mock(MarketTripRepository.class),
                 new MockEnvironment().withProperty("spring.profiles.active", "production"), passwords);
         ReflectionTestUtils.setField(seeder, "initialAdminEmail", "");
         ReflectionTestUtils.setField(seeder, "initialAdminPassword", "");

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 export function Login() {
@@ -31,7 +31,7 @@ export function Login() {
     <div className="max-w-md mx-auto">
       <div className="card">
         <h1 className="text-2xl font-bold">Login</h1>
-        <p className="text-ink-500 text-sm mt-1">Private access. Sign in with your approved account.</p>
+        <p className="text-ink-500 text-sm mt-1">Welcome back. Your next connection starts here.</p>
         <form onSubmit={onSubmit} className="mt-5 space-y-4">
           <div>
             <label className="label">Email</label>
@@ -46,7 +46,7 @@ export function Login() {
           </button>
         </form>
         <p className="text-sm text-ink-500 mt-5">
-          New here? Ask your administrator for a personal invitation link.
+          New here? <Link to={`/register?next=${encodeURIComponent(next)}`} className="underline font-semibold">Create an account</Link>
         </p>
       </div>
     </div>

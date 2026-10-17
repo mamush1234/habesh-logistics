@@ -12,8 +12,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.Instant;
 import java.time.Year;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Component
 public class DataSeeder {
@@ -30,6 +33,10 @@ public class DataSeeder {
     private final AgentProfileRepository agentProfiles;
     private final CommissionRepository commissionRepo;
     private final TrackingEventService trackingEventService;
+    private final MarketTripRepository marketTrips;
+
+    @Value("${app.demo-marketplace-trips-enabled:true}")
+    private boolean demoMarketplaceTripsEnabled;
 
     @Value("${app.pricing.default-rate-per-kg}")
     private BigDecimal defaultRate;
@@ -50,7 +57,7 @@ public class DataSeeder {
                       LuggageRepository luggageRepo, LuggageService luggageService,
                       RecipientRepository recipients, AgentProfileRepository agentProfiles,
                       CommissionRepository commissionRepo,
-                      TrackingEventService trackingEventService,
+                      TrackingEventService trackingEventService, MarketTripRepository marketTrips,
                       org.springframework.core.env.Environment environment,
                       org.springframework.security.crypto.password.PasswordEncoder passwordEncoder) {
         this.authService = authService;
@@ -65,6 +72,7 @@ public class DataSeeder {
         this.agentProfiles = agentProfiles;
         this.commissionRepo = commissionRepo;
         this.trackingEventService = trackingEventService;
+        this.marketTrips = marketTrips;
         this.environment = environment;
         this.passwordEncoder = passwordEncoder;
     }
@@ -93,12 +101,16 @@ public class DataSeeder {
         if (!environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "test"))) {
             throw new IllegalStateException("Demo data is allowed only in the dev or test profile");
         }
-        if (users.count() > 0) return;
+        if (users.count() > 0) {
+            seedMarketplaceTrips();
+            return;
+        }
 
         User admin = authService.createPrivilegedUser("Admin", "User", "admin@habeshlist.com",
                 "+1-555-0100", "Admin@123", Role.ADMIN);
         User traveler = authService.createPrivilegedUser("Ahmed", "Hassan", "traveler@example.com",
                 "+1-555-0101", "Traveler@123", Role.TRAVELER);
+        seedMarketplaceTrips();
         User sender1 = authService.createPrivilegedUser("Meron", "Tadesse", "sender@example.com",
                 "+1-555-0102", "Sender@123", Role.SENDER);
         User sender2 = authService.createPrivilegedUser("Yonas", "Bekele", "sender2@example.com",
@@ -192,10 +204,54 @@ public class DataSeeder {
                     || s.getTrackingNumber().equals("HL-000105")) {
                 luggageService.assignShipment(lug2.getId(), s.getId(), admin);
             }
+
         }
 
         // Re-init sequences based on real counts
         shipmentService.initTrackingSequence();
         tripService.initSequences();
+    }
+
+    private void seedMarketplaceTrips() {
+        if (!demoMarketplaceTripsEnabled) return;
+        users.findByEmailIgnoreCase("traveler@example.com")
+                .filter(user -> user.isActive() && user.getRole() == Role.TRAVELER)
+                .ifPresent(traveler -> {
+                    record Sample(String origin, int days, String capacity, Set<MarketplaceTypes.ItemType> allowed) {}
+                    var documents = MarketplaceTypes.ItemType.DOCUMENTS;
+                    var clothing = MarketplaceTypes.ItemType.CLOTHING;
+                    var electronics = MarketplaceTypes.ItemType.ELECTRONICS;
+                    var food = MarketplaceTypes.ItemType.FOOD;
+                    var other = MarketplaceTypes.ItemType.OTHER;
+                    List<Sample> samples = List.of(
+                            new Sample("Washington, DC", 3, "5.00", Set.of(documents, clothing)),
+                            new Sample("Washington, DC", 10, "12.00", Set.of(documents, clothing, electronics)),
+                            new Sample("Washington, DC", 21, "20.00", Set.of(documents, clothing, other)),
+                            new Sample("Alexandria, VA", 5, "8.00", Set.of(documents, clothing)),
+                            new Sample("Alexandria, VA", 14, "15.00", Set.of(documents, clothing, electronics)),
+                            new Sample("Arlington, VA", 8, "6.00", Set.of(documents, electronics)),
+                            new Sample("Baltimore, MD", 7, "10.00", Set.of(documents, clothing)),
+                            new Sample("Baltimore, MD", 18, "18.00", Set.of(documents, clothing, electronics, other)),
+                            new Sample("Silver Spring, MD", 12, "4.00", Set.of(documents, clothing, food)));
+                    var existing = marketTrips.findAll();
+                    LocalDate today = LocalDate.now();
+                    for (Sample sample : samples) {
+                        LocalDate departure = today.plusDays(sample.days());
+                        boolean exists = existing.stream().anyMatch(trip ->
+                                trip.getTraveler().getId().equals(traveler.getId())
+                                && trip.getOrigin().equals(sample.origin())
+                                && trip.getDestination().equals("Addis Ababa")
+                                && trip.getDepartureDate().equals(departure));
+                        if (exists) continue;
+                        var blocked = java.util.EnumSet.allOf(MarketplaceTypes.ItemType.class);
+                        blocked.removeAll(sample.allowed());
+                        marketTrips.save(MarketTrip.builder().traveler(traveler)
+                                .origin(sample.origin()).destination("Addis Ababa")
+                                .departureDate(departure).expectedArrivalDate(departure.plusDays(1))
+                                .capacityKg(new BigDecimal(sample.capacity()))
+                                .allowedItems(new HashSet<>(sample.allowed())).blockedItems(blocked)
+                                .createdAt(Instant.now()).build());
+                    }
+                });
     }
 }

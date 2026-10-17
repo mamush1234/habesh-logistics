@@ -183,6 +183,11 @@ class ConsolidationIntegrationTest {
                 "declaredWeightKg", weight, "pickupMethod", "ALEXANDRIA_DROPOFF"));
     }
 
+    private void markLegacy(String id) {
+        // Preserve coverage of transport assignments for shipments predating the queue.
+        entityManager.find(com.habeshlist.entity.Shipment.class, UUID.fromString(id)).setQueueStatus(null);
+    }
+
     @Test
     void receivingAgentCanReadLuggagePicturesButCannotAssignPackagesToTrips() throws Exception {
         String admin = login("admin@habeshlist.com", "Admin@123");
@@ -190,6 +195,7 @@ class ConsolidationIntegrationTest {
         String agentId = om.readTree(mvc.perform(get("/api/me").header("Authorization", "Bearer " + agent))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).get("id").asText();
         String sid = createPackage(admin, 2).get("id").asText();
+        markLegacy(sid);
         String image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQ5sAAAAASUVORK5CYII=";
         putJson("/api/shipments/" + sid + "/photo", admin, Map.of("photoDataUrl", image));
         JsonNode trip = createTrip(admin, 5, 1);
@@ -229,6 +235,7 @@ class ConsolidationIntegrationTest {
                 "destinationCountry", "Ethiopia", "destinationCity", "Addis Ababa",
                 "declaredWeightKg", 2, "pickupMethod", "ALEXANDRIA_DROPOFF"));
         String sid = shipment.get("id").asText();
+        markLegacy(sid);
         putJson("/api/shipments/" + sid + "/agent", admin, Map.of("agentId", agentId));
         JsonNode trip = createTrip(admin, 10, 1);
         String tid = trip.get("id").asText();
@@ -368,6 +375,7 @@ class ConsolidationIntegrationTest {
         String first = createPackage(admin, 2).get("id").asText();
         String second = createPackage(admin, 3).get("id").asText();
         String direct = createPackage(admin, 1).get("id").asText();
+        for (String id : List.of(first, second, direct)) markLegacy(id);
         postJson("/api/luggage/" + lid + "/shipments", admin, Map.of("shipmentId", first));
         JsonNode packed = postJson("/api/luggage/" + lid + "/shipments", admin, Map.of("shipmentId", second));
         assertEquals(5, packed.get("assignedWeightKg").asInt());

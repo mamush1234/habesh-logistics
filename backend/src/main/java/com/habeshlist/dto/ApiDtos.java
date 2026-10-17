@@ -23,17 +23,8 @@ public final class ApiDtos {
 
     public record AuthResponse(String token, long expiresInMs, UserDto user) {}
 
-    public record InvitationInfoDto(String email, Role role, Instant expiresAt) {}
-    public record CreatedInvitationDto(InvitationDto invitation, String token) {}
-    public record InvitationDeliveryDto(InvitationDto invitation, String token, String invitationUrl,
-                                        boolean emailSent, String deliveryMessage) {}
-    public record InvitationDto(UUID id, String email, Role role, Instant createdAt,
-                                Instant expiresAt, Instant usedAt, Instant revokedAt) {
-        public static InvitationDto from(Invitation invitation) {
-            return new InvitationDto(invitation.getId(), invitation.getEmail(), invitation.getRole(),
-                    invitation.getCreatedAt(), invitation.getExpiresAt(), invitation.getUsedAt(), invitation.getRevokedAt());
-        }
-    }
+    public record PublicTravelDto(UUID id, String origin, String destination, LocalDate departureDate,
+                                   BigDecimal availableCapacityKg) {}
 
     public record RecipientDto(UUID id, String name, String phone, String city, String address, String notes) {
         public static RecipientDto from(Recipient r) {
@@ -54,7 +45,8 @@ public final class ApiDtos {
             UUID assignedTravelerId, String assignedTravelerName, boolean hasPhoto,
             UUID tripId, String tripNumber,
             Instant createdAt, Instant updatedAt, List<RecipientDto> recipients, int photoCount,
-            UUID travelAnnouncementId, String travelRoute, LocalDate travelDepartureDate, String travelBookingStatus) {
+            UUID travelAnnouncementId, String travelRoute, LocalDate travelDepartureDate, String travelBookingStatus,
+            String queueStatus, Instant queueExpiresAt) {
         public static ShipmentDto from(Shipment s) {
             return new ShipmentDto(
                 s.getId(), s.getTrackingNumber(),
@@ -83,7 +75,8 @@ public final class ApiDtos {
                 s.getTravelAnnouncement() == null ? null : s.getTravelAnnouncement().getId(),
                 s.getTravelAnnouncement() == null ? null : s.getTravelAnnouncement().getOrigin() + " → " + s.getTravelAnnouncement().getDestination(),
                 s.getTravelAnnouncement() == null ? null : s.getTravelAnnouncement().getDepartureDate(),
-                s.getTravelBookingStatus() == null ? null : s.getTravelBookingStatus().name());
+                s.getTravelBookingStatus() == null ? null : s.getTravelBookingStatus().name(),
+                s.getQueueStatus() == null ? null : s.getQueueStatus().name(), s.getQueueExpiresAt());
         }
     }
 

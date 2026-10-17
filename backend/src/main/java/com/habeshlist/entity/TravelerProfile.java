@@ -18,5 +18,10 @@ public class TravelerProfile {
     private User user;
 
     private String verificationStatus;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private com.habeshlist.entity.enums.MarketplaceTypes.VerificationLevel marketplaceVerification =
+            com.habeshlist.entity.enums.MarketplaceTypes.VerificationLevel.UNVERIFIED;
     private String notes;
 }

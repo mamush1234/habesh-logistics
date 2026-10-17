@@ -54,6 +54,16 @@ public class AuthService {
         return new ApiDtos.AuthResponse(jwtService.generateToken(user), jwtService.getExpirationMs(), ApiDtos.UserDto.from(user));
     }
 
+    @Transactional
+    public ApiDtos.AuthResponse register(RequestDtos.RegisterRequest req) {
+        if (req.role() != Role.SENDER && req.role() != Role.TRAVELER) {
+            throw new BadRequestException("Only sender and traveler accounts can sign up. Contact an administrator for agent access.");
+        }
+        validateNewPassword(req.password());
+        return response(createPrivilegedUser(req.firstName().trim(), req.lastName().trim(),
+                req.email().trim(), req.phone(), req.password(), req.role()));
+    }
+
     public static void validateNewPassword(String password) {
         if (password == null || password.length() < 12
                 || password.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 72) {
@@ -77,10 +87,11 @@ public class AuthService {
     @Transactional
     public User createPrivilegedUser(String firstName, String lastName, String email, String phone,
                                      String rawPassword, Role role) {
+        email = email.trim().toLowerCase(java.util.Locale.ROOT);
         if (users.existsByEmailIgnoreCase(email)) throw new BadRequestException("Email already registered");
         User u = User.builder()
                 .firstName(firstName).lastName(lastName)
-                .email(email.toLowerCase()).phone(phone)
+                .email(email).phone(phone)
                 .passwordHash(passwordEncoder.encode(rawPassword))
                 .role(role).active(true).build();
         users.save(u);

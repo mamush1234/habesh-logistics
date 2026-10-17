@@ -20,11 +20,9 @@ public final class RequestDtos {
             @Email @NotBlank String email,
             String phone,
             @NotBlank @Size(min = 12, max = 72) String password,
-            @NotBlank @Size(min = 48, max = 48) String invitationToken
+            @NotNull com.habeshlist.entity.enums.Role role
     ) {}
 
-    public record CreateInvitationRequest(@Email @NotBlank @Size(max = 255) String email, @NotBlank String role) {}
-    public record InspectInvitationRequest(@NotBlank @Size(min = 48, max = 48) String token) {}
     public record UpdateUserAccessRequest(@NotNull Boolean active) {}
     public record ChangePasswordRequest(@NotBlank String currentPassword,
             @NotBlank @Size(min = 12, max = 72) String newPassword) {}

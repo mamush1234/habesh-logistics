@@ -15,6 +15,21 @@ import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> unreadable(org.springframework.http.converter.HttpMessageNotReadableException ex) {
+        return build(HttpStatus.BAD_REQUEST, "Invalid request body or field value", null);
+    }
+
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> missingResource(org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+        return build(HttpStatus.NOT_FOUND, "Resource not found", null);
+    }
+
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> methodNotAllowed(org.springframework.web.HttpRequestMethodNotSupportedException ex) {
+        return build(HttpStatus.METHOD_NOT_ALLOWED, "This operation is not supported", null);
+    }
+
     @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
     public ResponseEntity<Map<String, Object>> status(org.springframework.web.server.ResponseStatusException ex) {
         return build(HttpStatus.valueOf(ex.getStatusCode().value()), ex.getReason(), null);
