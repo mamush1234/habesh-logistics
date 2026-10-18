@@ -1,10 +1,17 @@
 
 # Public home page and registration
 
-The home page is public, with a responsive blue travel-community design, original
-local SVG artwork, How It Works, available trips, About and Help sections.
-Navigation and the hero buttons lead to real signup, shipment and traveler flows.
-Trip selection is preserved across login/registration.
+The public home page uses a responsive green-and-gold design with a centered
+hero, sender/traveler search tabs, upcoming trip cards, How It Works, safety
+cards, and a traveler signup call to action. City searches ignore punctuation,
+case, and repeated spaces. The sender's date filter limits trip previews by
+departure, not guaranteed arrival; full matching checks arrival and other rules.
+Signed-in travelers see open sender requests instead of other travelers' trips,
+with a departure-date filter inside each request's drop-off/deadline window.
+Request data is never fetched for anonymous visitors. Public cards show real
+capacity and dates, not fabricated identities, ratings, or per-kilogram prices.
+Escrow remains explicitly labeled as a simulation. Navigation leads to existing
+signup and marketplace flows, preserving selected trips across login/registration.
 
 Senders and travelers sign up directly at `/register`; invitations are no longer
 required or supported. Registration accepts a `SENDER` or `TRAVELER` role and

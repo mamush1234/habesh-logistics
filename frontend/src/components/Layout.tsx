@@ -30,24 +30,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className={`min-h-screen flex flex-col ${landing ? 'landing-shell' : ''}`}>
       <header className={`sticky top-0 z-20 backdrop-blur-md ${landing ? 'landing-header' : 'bg-white/90 border-b border-ink-300/60'}`}>
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 h-16 flex items-center justify-between">
+        <div className="header-inner max-w-7xl mx-auto px-3 sm:px-4 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2" data-testid="brand-link">
-            <div className="brand-mark">
+            {landing ? <div className="landing-brand">Habesh<span>Logistics</span></div> : <><div className="brand-mark">
               <Luggage className="w-9 h-9" />
               <Plane className="brand-plane" />
             </div>
             <div className="leading-tight">
               <div className="font-display font-bold tracking-tight text-base sm:text-xl text-blue-800 whitespace-nowrap">HabeshaList</div>
               <div className="hidden sm:block text-[10px] text-blue-950 tracking-wide whitespace-nowrap">Connect · Ship · Bring Closer</div>
-            </div>
+            </div></>}
           </Link>
 
-          <nav className="hidden xl:flex items-center gap-1" data-testid="main-nav">
+          <nav className={`hidden xl:flex items-center gap-1 ${landing && !user ? 'ml-auto mr-5' : ''}`} data-testid="main-nav">
             {!user && <>
-              <a href="/#home" className="landing-nav-link">Home</a>
+              <a href="/#trips" className="landing-nav-link">Trips</a>
               <a href="/#how-it-works" className="landing-nav-link">How It Works</a>
-              <a href="/#about" className="landing-nav-link">About</a>
-              <a href="/#help" className="landing-nav-link">Help</a>
+              <a href="/#safety" className="landing-nav-link">Safety</a>
             </>}
             {visible.map(item => (
               <NavLink key={item.to} to={item.to}
@@ -74,8 +73,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </>
             ) : (
               <>
-                <Link to="/login" className="btn btn-ghost !hidden sm:!inline-flex !text-blue-700 whitespace-nowrap" data-testid="login-link">Log in</Link>
-                <Link to="/register" className="btn bg-blue-600 text-white hover:bg-blue-700 !px-3 sm:!px-4 whitespace-nowrap" data-testid="signup-link">Sign up</Link>
+                <Link to="/login" className={landing ? 'landing-login whitespace-nowrap' : 'btn btn-ghost !hidden sm:!inline-flex !text-blue-700 whitespace-nowrap'} data-testid="login-link">Log in</Link>
+                {!landing && <Link to="/register" className="btn bg-blue-600 text-white hover:bg-blue-700 !px-3 sm:!px-4 whitespace-nowrap" data-testid="signup-link">Sign up</Link>}
               </>
             )}
             <button className="xl:hidden btn btn-ghost !px-2" aria-label={open ? 'Close navigation' : 'Open navigation'}
@@ -87,11 +86,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {open && (
           <div className="xl:hidden border-t border-ink-300/60 bg-white">
             <div className="max-w-7xl mx-auto px-4 py-2 flex flex-col">
-              {!user && ['Home', 'How It Works', 'About', 'Help'].map((label, index) => (
-                <a key={label} href={`/#${['home', 'how-it-works', 'about', 'help'][index]}`}
+              {!user && ['Trips', 'How It Works', 'Safety'].map((label, index) => (
+                <a key={label} href={`/#${['trips', 'how-it-works', 'safety'][index]}`}
                   className="py-2 px-3 rounded-lg text-blue-950" onClick={() => setOpen(false)}>{label}</a>
               ))}
-              {!user && <Link to="/login" className="sm:hidden py-2 px-3 rounded-lg text-blue-950" onClick={() => setOpen(false)}>Log in</Link>}
+              {!user && !landing && <Link to="/login" className="sm:hidden py-2 px-3 rounded-lg text-blue-950" onClick={() => setOpen(false)}>Log in</Link>}
               {visible.map(i => (
                 <NavLink key={i.to} to={i.to} onClick={() => setOpen(false)}
                   className={({ isActive }) => clsx(
@@ -109,12 +108,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      <footer className={`border-t border-ink-300/60 ${landing ? 'bg-blue-50' : 'bg-white'}`}>
+      {landing ? <footer className="landing-footer">Habesh Logistics &middot; Items must follow airline and customs rules.</footer> : <footer className="border-t border-ink-300/60 bg-white">
         <div className="max-w-7xl mx-auto px-4 py-6 text-sm text-ink-500 flex flex-wrap gap-2 items-center justify-between">
           <span>© {new Date().getFullYear()} Habesh Logistics</span>
           {user && <span>Sender → Shipment → Luggage → Trip → Traveler</span>}
         </div>
-      </footer>
+      </footer>}
     </div>
   );
 }
