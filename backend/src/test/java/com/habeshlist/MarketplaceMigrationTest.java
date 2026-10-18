@@ -29,6 +29,14 @@ class MarketplaceMigrationTest {
             assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
                     () -> jdbc.update("UPDATE market_trips SET reserved_kg = 6 WHERE id = ?", tripId));
             jdbc.update("INSERT INTO package_notifications (id, shipment_id, request_id) VALUES (?, NULL, NULL)", UUID.randomUUID());
+            new ResourceDatabasePopulator(new ClassPathResource("db/migration/V13__delivery_chat.sql")).execute(source);
+            UUID requestId = UUID.randomUUID();
+            jdbc.update("INSERT INTO delivery_requests (id,sender_id,pickup_city,destination_city,available_from,deadline,item_type,description,weight_kg,offered_price,status,escrow_status,created_at,updated_at) VALUES (?,?,'A','B',CURRENT_DATE,CURRENT_DATE,'DOCUMENTS','Test',1,20,'REQUESTED','NONE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", requestId, userId);
+            jdbc.update("INSERT INTO delivery_messages VALUES (?,?,?,'Persisted message',CURRENT_TIMESTAMP,1)", UUID.randomUUID(), requestId, userId);
+            assertEquals("Persisted message", jdbc.queryForObject("SELECT body FROM delivery_messages WHERE request_id = ?", String.class, requestId));
+            assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
+                    () -> jdbc.update("INSERT INTO delivery_messages VALUES (?,?,?,'Duplicate',CURRENT_TIMESTAMP,1)", UUID.randomUUID(), requestId, userId));
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM market_trips", Integer.class));
         } catch (java.sql.SQLException ex) {
             throw new AssertionError("Migration connection failed", ex);
         }

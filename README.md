@@ -6,7 +6,7 @@ hero, sender/traveler search tabs, upcoming trip cards, How It Works, safety
 cards, and a traveler signup call to action. City searches ignore punctuation,
 case, and repeated spaces. The sender's date filter limits trip previews by
 departure, not guaranteed arrival; full matching checks arrival and other rules.
-Signed-in travelers see open sender requests instead of other travelers' trips,
+Signed-in travelers and agents see open sender requests instead of other carriers' trips,
 with a departure-date filter inside each request's drop-off/deadline window.
 Request data is never fetched for anonymous visitors. Public cards show real
 capacity and dates, not fabricated identities, ratings, or per-kilogram prices.
@@ -47,7 +47,7 @@ backfilled, without changing their trips or reservations. Set
 in automated tests). Production never seeds demo trips.
 
 The marketplace **replaces** the exclusive 10-minute queue and new service-fee
-proof uploads. Travelers post their own trips from **My trips**: origin,
+proof uploads. Travelers and agents post their own trips from **My trips**: origin,
 destination, departure, optional arrival, available weight, allowed and blocked
 item categories. Only explicitly allowed categories can match; rules cannot
 overlap. Senders use **Send Package** to post pickup/destination cities, an
@@ -56,13 +56,20 @@ price. **My packages** and the sender dashboard show only requests created by th
 signed-in sender, with status/search filters and links to their offers and delivery
 progress. Traveler trips and marketplace browsing sections are not shown on this
 page; they remain available separately under **Marketplace**. Sender marketplace
-browsing shows traveler trips, not sender requests. Travelers browse sender
+browsing shows traveler/agent trips, not sender requests. Travelers and agents browse sender
 requests and see only their own posted trips, never another traveler's trip
 profile in the authenticated trip list. This restriction is enforced server-side,
 including trip-match ownership checks. Public landing previews remain anonymous
 route/date/capacity summaries without traveler identities. Admins retain full
-visibility. Agents can browse;
-only travelers submit offers, and only the owning sender selects an offer.
+visibility. Travelers and agents submit offers using only their own compatible
+delivery trips, and only the owning sender selects an offer. Agent accounts are
+still administrator-created; enabling offers does not enable public agent signup.
+Before acceptance, trip listings, suggestions, and pending offers use anonymous
+traveler/agent labels instead of real names. Reputation, role, route, capacity,
+and pricing remain visible. Participants can see their own identity and admins
+retain full visibility. Acceptance reveals the sender's name to the selected
+carrier and the selected carrier's name to the sender on that package only;
+unselected offer authors stay anonymous. Email/phone fields remain escrow-gated.
 
 Suggestions accept pickup locations within the same DC/Maryland/Northern Virginia
 region, or matching pickup city names elsewhere (case and repeated whitespace ignored).
@@ -93,25 +100,52 @@ not a fabricated score. Admin-managed verification levels are UNVERIFIED (0),
 ID_VERIFIED (10), FULLY_VERIFIED (20). Verification is an administrator attestation,
 not an automated identity check. Admin controls are on marketplace trip cards.
 
-Travelers send a priced offer or **Accept asking price** (which sends an offer,
+Travelers and agents send a priced offer or **Accept asking price** (which sends an offer,
 not an automatic match). The sender accepts one; all competing pending offers
 are declined. Offers do not reserve capacity. Acceptance locks the request and
 trip, rechecks eligibility, and reserves kilograms atomically to prevent double
 selection and overbooking. There is no automatic reservation expiry after matching.
-Travelers may withdraw pending offers; senders may decline them.
+Travelers and agents may withdraw pending offers; senders may decline them.
 
 **Escrow is a labeled simulation only. No payment provider is configured, and no
 real funds are collected, held, released or refunded.** The owning sender funds
 demo escrow for the accepted offer's exact price. It does not charge the old 2%
 service fee. Funding unlocks account contact details for the selected participants.
-Before that, travelers see route, dates, items and offers they authored, not sender
-contact details or competing offers. Do not put contacts into descriptions/messages.
+Before that, travelers/agents see route, dates, items and offers they authored, not
+sender account contact fields or competing offers. Do not put contacts into public
+descriptions or offer messages. Accepted-package chat is an explicit exception:
+participants can communicate immediately after acceptance, before escrow funding.
+
+## Package chat
+
+Each marketplace package gets a persistent text conversation once the sender accepts
+an offer. Only its owning sender and selected traveler/agent can read and send
+messages. Other senders, unselected offer authors, unrelated travelers/agents, and
+anonymous visitors have no access, enforced by both chat endpoints. Administrators
+can review the full conversation from the package detail page but cannot post.
+Chat remains available during disputes; after completion or cancellation its history
+is read-only. Requests that never accepted an offer have no chat.
+
+Open **My packages** (sender) or **Marketplace** (traveler/agent/admin), choose the
+package, and use **Package chat**. Agents can post routes through **My trips** or
+the agent dashboard's **My delivery trips** link. Chat messages identify their author
+and role, preserve line breaks, and are rendered as plain text (no HTML or attachments).
+Messages must contain 1-2000 characters; whitespace-only messages are rejected.
+Failed sends keep the draft and display an error. History polls every 5 seconds
+and pages in batches of 50 using **Load earlier messages**. New messages generate
+a persistent in-app notification for the other participant without including the
+message body. Package locks serialize sends and status changes to keep ordering
+stable and prevent writes after closure. No external chat service is used.
+
+Chat content is visible immediately to the other participant and administrators.
+Account contact fields still require escrow funding, but chat can reveal any details
+participants choose to write before funding.
 
 The enforced marketplace state machine is:
 
 `REQUESTED -> MATCHED -> PAID_ESCROW -> PICKED_UP -> IN_TRANSIT -> DELIVERED -> COMPLETED`
 
-Travelers update pickup/transit/delivery; the sender confirms receipt to complete
+Travelers/agents update pickup/transit/delivery; the sender confirms receipt to complete
 and simulate escrow release. Admins can perform delivery steps but cannot choose
 offers or fund escrow on a sender's behalf. A sender may submit one 1-5 rating
 after completion. Sender/selected traveler/admin may cancel before pickup;
@@ -131,8 +165,10 @@ Marketplace APIs (authenticated; ownership and role checks are server-side):
 - `GET/POST /api/marketplace/trips`
 - `GET/POST /api/marketplace/requests`
 - `GET /api/marketplace/requests/{id}`
-- `GET /api/marketplace/requests/{id}/matches` (sender/admin)
-- `GET /api/marketplace/trips/{id}/matches` (owning traveler/admin)
+- `GET /api/marketplace/requests/{id}/matches` (sender/admin, or eligible traveler/agent's own trips)
+- `GET /api/marketplace/trips/{id}/matches` (owning traveler/agent/admin)
+- `GET /api/marketplace/requests/{id}/messages` (latest 50, optional positive `before` sequence cursor; matched participants/admin)
+- `POST /api/marketplace/requests/{id}/messages` (`body`; matched participants only, before closure)
 - `POST /api/marketplace/requests/{id}/offers`
 - `POST /api/marketplace/requests/{id}/offers/{offerId}/{accept|decline|withdraw}`
 - `POST /api/marketplace/requests/{id}/demo-escrow`
@@ -142,7 +178,8 @@ Marketplace APIs (authenticated; ownership and role checks are server-side):
 - `GET /api/package-queue/notifications`, `PUT /api/package-queue/notifications/{id}/read`
 
 V12 adds marketplace tables without rewriting legacy shipments, assignments,
-payments or migration history. The old queue scheduler and mutation endpoints
+payments or migration history. V13 adds persistent per-package chat without changing
+existing delivery records. The old queue scheduler and mutation endpoints
 are removed. `/package-queue` redirects to the marketplace. Admins retain a
 read-only **Legacy package archive** (including old payment confirmations);
 existing paid-claimant shipment privacy checks remain intact. Legacy operational

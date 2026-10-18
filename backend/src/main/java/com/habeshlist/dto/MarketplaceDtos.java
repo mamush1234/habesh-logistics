@@ -1,6 +1,7 @@
 package com.habeshlist.dto;
 
 import com.habeshlist.entity.enums.MarketplaceTypes.*;
+import com.habeshlist.entity.enums.Role;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.*;
@@ -25,7 +26,7 @@ public final class MarketplaceDtos {
     public record TransitionInput(@NotNull DeliveryStatus status, @Size(max = 1000) String reason) {}
     public record RatingInput(@NotNull @Min(1) @Max(5) Integer rating) {}
     public record VerificationInput(@NotNull VerificationLevel level) {}
-    public record TravelerDto(UUID id, String name, Double rating, long ratingCount, VerificationLevel verification) {}
+    public record TravelerDto(UUID id, String name, Double rating, long ratingCount, VerificationLevel verification, Role role) {}
     public record TripDto(UUID id, TravelerDto traveler, String origin, String destination, LocalDate departureDate,
             LocalDate expectedArrivalDate, BigDecimal capacityKg, BigDecimal availableKg,
             Set<ItemType> allowedItems, Set<ItemType> blockedItems) {}
@@ -38,6 +39,10 @@ public final class MarketplaceDtos {
             BigDecimal weightKg, BigDecimal offeredPrice, DeliveryStatus status, EscrowStatus escrowStatus,
             BigDecimal escrowAmount, UUID acceptedOfferId, Integer rating, String disputeReason,
             List<OfferDto> offers, List<EventDto> timeline, ContactDto senderContact, ContactDto travelerContact,
-            Instant createdAt) {}
+            Instant createdAt, String senderName) {}
     public record MatchDto(RequestDto request, TripDto trip, BigDecimal price, double score) {}
+    public record MessageInput(@NotBlank @Size(max = 2000) String body) {}
+    public record MessageDto(UUID id, UUID authorId, String authorName, Role authorRole,
+            String body, Instant createdAt, long sequenceNumber) {}
+    public record ChatDto(List<MessageDto> messages, Long nextBefore, boolean writable) {}
 }

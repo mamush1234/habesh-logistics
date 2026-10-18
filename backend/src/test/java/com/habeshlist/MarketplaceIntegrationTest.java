@@ -28,6 +28,7 @@ class MarketplaceIntegrationTest {
     @Autowired DeliveryRequestRepository requests;
     @Autowired MarketTripRepository trips;
     @Autowired UserRepository users;
+    @Autowired DeliveryMessageRepository chatMessages;
     @Autowired com.habeshlist.service.DataSeeder seeder;
     private final String origin = "Origin-" + UUID.randomUUID();
     private final String destination = "Destination-" + UUID.randomUUID();
@@ -107,6 +108,164 @@ class MarketplaceIntegrationTest {
     private JsonNode matched(String sender, String traveler, JsonNode trip) throws Exception {
         JsonNode r = request(sender);
         return accept(sender, r, offer(traveler, r, trip, 40));
+    }
+
+    @Test
+    void namesStayPrivateUntilAcceptanceAndContactsUntilFundingForTravelersAndAgents() throws Exception {
+        String s = sender(), a = admin(), other = newTraveler();
+        for (String selected : List.of(traveler(), login("agent@example.com", "Agent@123"))) {
+            JsonNode trip = trip(selected), otherTrip = trip(other), r = request(s);
+            String realName = trip.get("traveler").get("name").asText();
+            String senderName = r.get("senderContact").get("name").asText();
+            JsonNode before = ok("GET", path(r), selected, null);
+            assertTrue(before.get("senderName").isNull());
+            assertTrue(before.get("senderContact").isNull());
+            JsonNode senderTrips = ok("GET", base + "/trips", s, null);
+            assertFalse(senderTrips.toString().contains(realName));
+            JsonNode matches = ok("GET", path(r) + "/matches", s, null);
+            assertFalse(matches.toString().contains(realName));
+            assertTrue(ok("GET", base + "/trips/" + trip.get("id").asText() + "/matches", selected, null)
+                    .get(0).get("request").get("senderName").isNull());
+            JsonNode selectedOffer = offer(selected, r, trip, 40);
+            JsonNode otherOffer = offer(other, r, otherTrip, 45);
+            JsonNode pending = ok("GET", path(r), s, null);
+            for (JsonNode offer : pending.get("offers")) assertTrue(offer.get("traveler").get("name").asText().startsWith("Private "));
+            assertTrue(ok("GET", path(r), a, null).toString().contains(realName));
+            JsonNode matched = accept(s, r, selectedOffer);
+            for (JsonNode offer : matched.get("offers")) {
+                if (offer.get("id").equals(selectedOffer.get("id"))) assertEquals(realName, offer.get("traveler").get("name").asText());
+                if (offer.get("id").equals(otherOffer.get("id"))) assertTrue(offer.get("traveler").get("name").asText().startsWith("Private "));
+            }
+            assertTrue(matched.get("travelerContact").isNull());
+            JsonNode selectedView = ok("GET", path(r), selected, null);
+            assertEquals(senderName, selectedView.get("senderName").asText());
+            assertTrue(selectedView.get("senderContact").isNull());
+            assertTrue(selectedView.get("travelerContact").isNull());
+            ok("POST", path(r) + "/demo-escrow", s, null);
+            assertEquals("sender@example.com", ok("GET", path(r), selected, null).get("senderContact").get("email").asText());
+            assertFalse(ok("GET", path(r), s, null).get("travelerContact").isNull());
+        }
+    }
+
+    @Test
+    void packageChatUnlocksOnlyForSelectedParticipantsAndAdminsBeforeFunding() throws Exception {
+        String s = sender(), t = traveler(), other = newTraveler(), a = admin();
+        String otherSender = login("sender2@example.com", "Sender@123");
+        String agent = login("agent@example.com", "Agent@123");
+        JsonNode trip = trip(t), r = request(s);
+        String chat = path(r) + "/messages";
+        for (String token : List.of(s, t, a, agent)) {
+            call("GET", chat, token, null).andExpect(status().isForbidden());
+            call("POST", chat, token, Map.of("body", "Not matched yet")).andExpect(status().isForbidden());
+        }
+        JsonNode selected = offer(t, r, trip, 40);
+        offer(other, r, trip(other), 45);
+        call("GET", chat, t, null).andExpect(status().isForbidden());
+        accept(s, r, selected);
+        assertTrue(ok("GET", chat, s, null).get("writable").asBoolean());
+        assertFalse(ok("GET", chat, a, null).get("writable").asBoolean());
+        assertTrue(ok("GET", path(r), t, null).get("senderContact").isNull());
+        JsonNode first = ok("POST", chat, s, Map.of("body", "  Package ready for pickup  "));
+        assertEquals("Package ready for pickup", first.get("body").asText());
+        assertEquals("SENDER", first.get("authorRole").asText());
+        ok("POST", chat, t, Map.of("body", "<script>not executed</script>\nI can collect it."));
+        assertEquals(2, chatMessages.findByRequestIdAndSequenceNumberLessThanOrderBySequenceNumberDesc(
+                UUID.fromString(r.get("id").asText()), Long.MAX_VALUE,
+                org.springframework.data.domain.PageRequest.of(0, 50)).size());
+        assertEquals(2, ok("GET", chat, a, null).get("messages").size());
+        assertEquals(2, ok("GET", chat, s, null).get("messages").get(0).get("sequenceNumber").asInt());
+        for (String token : List.of(otherSender, other, agent)) {
+            call("GET", chat, token, null).andExpect(status().isForbidden());
+            call("POST", chat, token, Map.of("body", "Unauthorized")).andExpect(status().isForbidden());
+        }
+        call("GET", chat, null, null).andExpect(status().isUnauthorized());
+        call("POST", chat, a, Map.of("body", "Admin cannot write")).andExpect(status().isForbidden());
+        JsonNode separate = request(s);
+        call("GET", path(separate) + "/messages", t, null).andExpect(status().isForbidden());
+        JsonNode notification = ok("GET", "/api/package-queue/notifications", s, null);
+        assertTrue(notification.findValues("message").stream().anyMatch(value -> value.asText().startsWith("New package chat message.")));
+        assertFalse(notification.toString().contains("not executed"));
+        move(s, r, "CANCELLED");
+        assertEquals(2, ok("GET", chat, t, null).get("messages").size());
+        assertFalse(ok("GET", chat, s, null).get("writable").asBoolean());
+        call("POST", chat, s, Map.of("body", "Closed")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void chatValidatesMessagesAndPaginatesWithoutCrossPackageLeaks() throws Exception {
+        String s = sender(), t = traveler();
+        JsonNode r = matched(s, t, trip(t));
+        String chat = path(r) + "/messages";
+        for (String body : List.of("", " \n\t", "x".repeat(2001)))
+            call("POST", chat, s, Map.of("body", body)).andExpect(status().isBadRequest());
+        call("POST", chat, s, Map.of()).andExpect(status().isBadRequest());
+        call("GET", chat + "?before=0", s, null).andExpect(status().isBadRequest());
+        call("GET", chat + "?before=invalid", s, null).andExpect(status().isBadRequest());
+        for (int i = 1; i <= 52; i++) ok("POST", chat, s, Map.of("body", "Message " + i));
+        JsonNode latest = ok("GET", chat, t, null);
+        assertEquals(50, latest.get("messages").size());
+        assertEquals("Message 52", latest.get("messages").get(0).get("body").asText());
+        assertEquals("Message 3", latest.get("messages").get(49).get("body").asText());
+        JsonNode earlier = ok("GET", chat + "?before=" + latest.get("nextBefore").asLong(), t, null);
+        assertEquals(2, earlier.get("messages").size());
+        assertEquals("Message 2", earlier.get("messages").get(0).get("body").asText());
+        assertTrue(earlier.get("nextBefore").isNull());
+        JsonNode separate = request(s);
+        JsonNode separateMatch = accept(s, separate, offer(t, separate, trip(t), 40));
+        assertEquals(0, ok("GET", path(separateMatch) + "/messages", s, null).get("messages").size());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void simultaneousChatMessagesPersistInSequenceOrder() throws Exception {
+        String s = sender(), t = traveler();
+        JsonNode r = matched(s, t, trip(t));
+        String chat = path(r) + "/messages";
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            List<Future<Integer>> results = new ArrayList<>();
+            for (String token : List.of(s, t)) results.add(pool.submit(() -> {
+                ready.countDown();
+                assertTrue(start.await(10, TimeUnit.SECONDS));
+                return call("POST", chat, token, Map.of("body", "Simultaneous message"))
+                        .andReturn().getResponse().getStatus();
+            }));
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            for (Future<Integer> result : results) assertEquals(200, result.get(20, TimeUnit.SECONDS));
+        }
+        JsonNode persisted = ok("GET", chat, s, null).get("messages");
+        assertEquals(2, persisted.size());
+        assertEquals(2, persisted.get(0).get("sequenceNumber").asLong());
+        assertEquals(1, persisted.get(1).get("sequenceNumber").asLong());
+    }
+
+    @Test
+    void agentsCanPostOwnTripsWinOffersChatAndCompleteDelivery() throws Exception {
+        String s = sender(), t = traveler(), agent = login("agent@example.com", "Agent@123"), a = admin();
+        JsonNode agentTrip = trip(agent), travelerTrip = trip(t), r = request(s);
+        assertEquals("AGENT", agentTrip.get("traveler").get("role").asText());
+        JsonNode own = ok("GET", base + "/trips", agent, null);
+        assertTrue(own.findValues("id").contains(agentTrip.get("id")));
+        assertFalse(own.findValues("id").contains(travelerTrip.get("id")));
+        call("GET", base + "/trips/" + travelerTrip.get("id").asText() + "/matches", agent, null)
+                .andExpect(status().isForbidden());
+        call("POST", path(r) + "/offers", agent, Map.of("tripId", travelerTrip.get("id").asText(), "price", 40))
+                .andExpect(status().isForbidden());
+        assertEquals(agentTrip.get("id"), ok("GET", path(r) + "/matches", agent, null).get(0).get("trip").get("id"));
+        String verifyPath = base + "/travelers/" + agentTrip.get("traveler").get("id").asText() + "/verification";
+        assertEquals("ID_VERIFIED", ok("PUT", verifyPath, a, Map.of("level", "ID_VERIFIED")).get("verification").asText());
+        accept(s, r, offer(agent, r, agentTrip, 40));
+        String chat = path(r) + "/messages";
+        assertEquals("AGENT", ok("POST", chat, agent, Map.of("body", "Agent pickup arranged")).get("authorRole").asText());
+        ok("POST", chat, s, Map.of("body", "Thank you"));
+        ok("POST", path(r) + "/demo-escrow", s, null);
+        move(agent, r, "PICKED_UP"); move(agent, r, "IN_TRANSIT"); move(agent, r, "DELIVERED"); move(s, r, "COMPLETED");
+        assertEquals(2, ok("GET", chat, a, null).get("messages").size());
+        assertFalse(ok("GET", chat, agent, null).get("writable").asBoolean());
+        call("POST", chat, agent, Map.of("body", "Too late")).andExpect(status().isBadRequest());
+        ok("POST", path(r) + "/rating", s, Map.of("rating", 5));
     }
 
     @Test

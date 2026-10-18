@@ -11,7 +11,7 @@ const navItems = [
   { to: '/my-shipments', label: 'My packages', roles: ['SENDER'] },
   { to: '/track', label: 'Track', public: true },
   { to: '/account', label: 'Account', public: true },
-  { to: '/traveler', label: 'My trips', roles: ['TRAVELER', 'ADMIN'] },
+  { to: '/traveler', label: 'My trips', roles: ['TRAVELER', 'AGENT', 'ADMIN'] },
   { to: '/agent', label: 'Agent', roles: ['AGENT', 'ADMIN'] },
   { to: '/marketplace', label: 'Marketplace', roles: ['SENDER', 'AGENT', 'TRAVELER', 'ADMIN'] },
   { to: '/admin', label: 'Admin', roles: ['ADMIN'] },

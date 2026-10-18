@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthContext';
 import { MarketplaceApi } from '../api/marketplace';
 import type { DeliveryStatus } from '../api/marketplace';
 import { DemoNotice, display, marketError, money, TravelerReputation, TripCard } from './Marketplace';
+import { PackageChat } from '../components/PackageChat';
 
 export function MarketplaceRequest() {
   const { id = '' } = useParams();
@@ -21,10 +22,11 @@ export function MarketplaceRequest() {
   const r = query.data;
   const sender = r?.senderId === user?.id;
   const admin = user?.role === 'ADMIN';
+  const canOffer = user?.role === 'TRAVELER' || user?.role === 'AGENT';
   const accepted = r?.offers.find(o => o.id === r.acceptedOfferId);
   const carrier = accepted?.traveler.id === user?.id;
   const matches = useQuery({ queryKey: ['marketplace', 'request-matches', id, user?.id], queryFn: () => MarketplaceApi.requestMatches(id),
-    enabled: !!r && (sender || admin || user?.role === 'TRAVELER') && r.status === 'REQUESTED', refetchInterval: 15_000 });
+    enabled: !!r && (sender || admin || canOffer) && r.status === 'REQUESTED', refetchInterval: 15_000 });
   const eligibleTrips = matches.data?.map(m => m.trip) ?? [];
   const selectedTrip = eligibleTrips.find(t => t.id === tripId);
   const mutation = useMutation({ mutationFn: (action: () => Promise<unknown>) => action(),
@@ -46,10 +48,12 @@ export function MarketplaceRequest() {
       <p>Demo escrow: {display(r.escrowStatus)}{r.escrowAmount != null && <> &middot; {money(r.escrowAmount)}</>}</p>
       {r.disputeReason && <p className="text-red-700 break-words">Dispute: {r.disputeReason}</p>}
       {r.senderContact && <p className="text-sm break-words">Sender: {r.senderContact.name} &middot; {r.senderContact.email} {r.senderContact.phone}</p>}
-      {r.travelerContact && <p className="text-sm break-words">Traveler: {r.travelerContact.name} &middot; {r.travelerContact.email} {r.travelerContact.phone}</p>}
-      {!r.travelerContact && <p className="text-sm text-ink-500">Counterparty contact details unlock for the selected participants after demo escrow funding.</p>}
+      {!r.senderContact && r.senderName && <p className="text-sm break-words">Sender: {r.senderName}</p>}
+      {r.travelerContact && <p className="text-sm break-words">Traveler / agent: {r.travelerContact.name} &middot; {r.travelerContact.email} {r.travelerContact.phone}</p>}
+      {!r.travelerContact && <p className="text-sm text-ink-500">Participant names unlock when an offer is accepted. Email and phone details unlock for the selected participants after demo escrow funding.</p>}
     </section>
-    {r.status === 'REQUESTED' && user?.role === 'TRAVELER' && !pending && <form className="card space-y-4" onSubmit={e => { e.preventDefault(); if (selectedTrip) act(() => MarketplaceApi.offer(id, selectedTrip.id, Number(price), message)); }}>
+    {r.acceptedOfferId && (sender || carrier || admin) && <PackageChat key={`${id}:${user?.id}`} requestId={id} closed={r.status === 'CANCELLED' || r.status === 'COMPLETED'} />}
+    {r.status === 'REQUESTED' && canOffer && !pending && <form className="card space-y-4" onSubmit={e => { e.preventDefault(); if (selectedTrip) act(() => MarketplaceApi.offer(id, selectedTrip.id, Number(price), message)); }}>
       <h2 className="text-xl font-bold">Send an offer</h2>
       {matches.isPending && <p role="status">Checking your trips for a match...</p>}
       {matches.isError && <p role="alert">Could not check your trips. <button type="button" className="underline" onClick={() => matches.refetch()}>Retry</button></p>}
@@ -63,7 +67,7 @@ export function MarketplaceRequest() {
       <p className="text-sm">Accepting the asking price sends an offer. The sender must still select you. Weight is reserved only after sender acceptance.</p>
     </form>}
     <section className="card space-y-4">
-      <h2 className="text-xl font-bold">{sender || admin ? 'Traveler offers (ranked)' : 'Your offers'}</h2>
+      <h2 className="text-xl font-bold">{sender || admin ? 'Traveler / agent offers (ranked)' : 'Your offers'}</h2>
       {r.offers.length === 0 && <p>No offers yet.</p>}
       {r.offers.map(o => <article key={o.id} className="border-t py-3 space-y-2">
         <TravelerReputation traveler={o.traveler} /><p className="font-semibold">{money(o.price)} &middot; {display(o.status)} &middot; Score {o.score.toFixed(2)}</p>

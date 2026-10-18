@@ -51,6 +51,10 @@ public class MarketplaceService {
         if (!condition) throw new AccessDeniedException("This action is not available to your account");
     }
     private boolean admin() { return SecurityUtils.currentUser().role() == Role.ADMIN; }
+    private boolean offeringRole() {
+        Role role = SecurityUtils.currentUser().role();
+        return role == Role.TRAVELER || role == Role.AGENT;
+    }
     private UUID actorId() { return SecurityUtils.currentUser().userId(); }
     private LocalDate today() { return LocalDate.now(clock.withZone(ZoneId.systemDefault())); }
     private DeliveryRequest request(UUID id) {
@@ -74,7 +78,7 @@ public class MarketplaceService {
     @Transactional
     public TripDto createTrip(TripInput input) {
         User traveler = actor();
-        permit(traveler.getRole() == Role.TRAVELER);
+        permit(offeringRole());
         require(!input.departureDate().isBefore(today()), "Departure date must not be in the past");
         require(input.expectedArrivalDate() == null || !input.expectedArrivalDate().isBefore(input.departureDate()),
                 "Arrival date cannot be before departure");
@@ -91,7 +95,7 @@ public class MarketplaceService {
     public List<TripDto> listTrips() {
         return trips.findAllByOrderByDepartureDateAscCreatedAtAsc().stream()
                 .filter(t -> admin() || t.getTraveler().getId().equals(actorId())
-                        || (SecurityUtils.currentUser().role() != Role.TRAVELER
+                        || (!offeringRole()
                             && !t.getDepartureDate().isBefore(today()) && t.getTraveler().isActive()))
                 .map(this::tripDto).toList();
     }
@@ -180,10 +184,15 @@ public class MarketplaceService {
         require(reasons.isEmpty(), String.join("; ", reasons));
     }
     private TravelerDto traveler(User user) {
+        return traveler(user, admin() || user.getId().equals(actorId()));
+    }
+    private TravelerDto traveler(User user, boolean revealName) {
         VerificationLevel level = profiles.findById(user.getId()).map(TravelerProfile::getMarketplaceVerification)
                 .orElse(VerificationLevel.UNVERIFIED);
-        return new TravelerDto(user.getId(), user.getFirstName() + " " + user.getLastName(),
-                requests.averageRating(user.getId()), requests.ratingCount(user.getId()), level);
+        String name = revealName ? user.getFirstName() + " " + user.getLastName()
+                : user.getRole() == Role.AGENT ? "Private agent" : "Private traveler";
+        return new TravelerDto(user.getId(), name,
+                requests.averageRating(user.getId()), requests.ratingCount(user.getId()), level, user.getRole());
     }
     private double reputation(TravelerDto traveler) {
         return (traveler.rating() == null ? 0 : traveler.rating() / 5 * 30)
@@ -201,7 +210,7 @@ public class MarketplaceService {
     @Transactional(readOnly = true)
     public List<MatchDto> matchesForRequest(UUID id) {
         DeliveryRequest r = request(id);
-        boolean traveler = SecurityUtils.currentUser().role() == Role.TRAVELER;
+        boolean traveler = offeringRole();
         permit(sender(r) || admin() || (traveler && visible(r)));
         List<MarketTrip> candidates = trips.findAllByOrderByDepartureDateAscCreatedAtAsc().stream()
                 .filter(t -> !traveler || t.getTraveler().getId().equals(actorId()))
@@ -236,7 +245,7 @@ public class MarketplaceService {
     @Transactional
     public RequestDto sendOffer(UUID requestId, OfferInput input) {
         User user = actor();
-        permit(user.getRole() == Role.TRAVELER);
+        permit(offeringRole());
         DeliveryRequest r = lockRequest(requestId);
         MarketTrip t = lockTrip(input.tripId());
         permit(t.getTraveler().getId().equals(user.getId()));
@@ -250,7 +259,7 @@ public class MarketplaceService {
         offer.setStatus(OfferStatus.PENDING);
         offer.setCreatedAt(clock.instant());
         offers.saveAndFlush(offer);
-        notifications.notifyRequest(r, r.getSender(), "A traveler sent an offer. Review it in the marketplace.");
+        notifications.notifyRequest(r, r.getSender(), "A traveler or agent sent an offer. Review it in the marketplace.");
         return requestDto(r);
     }
 
@@ -269,7 +278,7 @@ public class MarketplaceService {
             if (other.getStatus() == OfferStatus.PENDING) {
                 other.setStatus(other.getId().equals(offerId) ? OfferStatus.ACCEPTED : OfferStatus.DECLINED);
                 notifications.notifyRequest(r, other.getTraveler(), other.getId().equals(offerId)
-                        ? "Your offer was accepted. Waiting for demo escrow funding."
+                        ? "Your offer was accepted. Package chat is open; waiting for demo escrow funding."
                         : "The sender selected another offer for this request.");
             }
         }
@@ -362,7 +371,9 @@ public class MarketplaceService {
     @Transactional
     public TravelerDto verify(UUID id, VerificationLevel level) {
         permit(admin());
-        TravelerProfile profile = profiles.findById(id).orElseThrow(() -> new NotFoundException("Traveler profile not found"));
+        User user = users.findById(id).orElseThrow(() -> new NotFoundException("User not found"));
+        require(user.getRole() == Role.TRAVELER || user.getRole() == Role.AGENT, "Only travelers and agents can be verified for offers");
+        TravelerProfile profile = profiles.findById(id).orElseGet(() -> profiles.save(TravelerProfile.builder().user(user).build()));
         profile.setMarketplaceVerification(level);
         return traveler(profile.getUser());
     }
@@ -385,7 +396,9 @@ public class MarketplaceService {
         BigDecimal min = visibleOffers.stream().filter(o -> o.getStatus() == OfferStatus.PENDING)
                 .map(DeliveryOffer::getPrice).min(BigDecimal::compareTo).orElse(r.getOfferedPrice());
         List<OfferDto> offerDtos = visibleOffers.stream().map(o -> new OfferDto(o.getId(), o.getTrip().getId(),
-                traveler(o.getTraveler()), o.getPrice(), o.getMessage(), o.getStatus(),
+                traveler(o.getTraveler(), admin() || o.getTraveler().getId().equals(actorId())
+                        || (sender(r) && r.getAcceptedOffer() != null && r.getAcceptedOffer().getId().equals(o.getId()))),
+                o.getPrice(), o.getMessage(), o.getStatus(),
                 senderScore(o.getPrice(), min, traveler(o.getTraveler()))))
                 .sorted(Comparator.comparingDouble(OfferDto::score).reversed().thenComparing(OfferDto::id)).toList();
         boolean participant = sender(r) || carrier(r) || admin();
@@ -399,6 +412,7 @@ public class MarketplaceService {
                         .map(e -> new EventDto(e.getStatus(), e.getDescription(), e.getCreatedAt())).toList() : List.of(),
                 sender(r) || (participant && contactsUnlocked) ? contact(r.getSender()) : null,
                 participant && contactsUnlocked && r.getAcceptedOffer() != null ? contact(r.getAcceptedOffer().getTraveler()) : null,
-                r.getCreatedAt());
+                r.getCreatedAt(), sender(r) || admin() || carrier(r)
+                        ? r.getSender().getFirstName() + " " + r.getSender().getLastName() : null);
     }
 }

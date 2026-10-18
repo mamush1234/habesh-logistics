@@ -10,6 +10,7 @@ import { PackagePhoto } from '../../components/PackagePhoto';
 import { useAuth } from '../../auth/AuthContext';
 import { TravelCalendar } from '../../components/TravelCalendar';
 import { TravelRequests } from '../../components/TravelRequests';
+import { Link } from 'react-router-dom';
 
 export function AgentDashboard() {
   const { user } = useAuth();
@@ -42,6 +43,14 @@ export function AgentDashboard() {
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold">Agent dashboard</h1>
+      <div className="card space-y-3">
+        <h2 className="text-xl font-semibold">Package offers and chat</h2>
+        <p>Post a delivery trip and send offers for matching sender requests. Once your offer is accepted, open the package to chat with its sender.</p>
+        <div className="flex flex-wrap gap-2">
+          <Link to="/traveler" className="btn btn-brand">My delivery trips</Link>
+          <Link to="/marketplace" className="btn btn-ghost">Sender requests and deliveries</Link>
+        </div>
+      </div>
 
       <TravelCalendar allowPosting />
       <TravelRequests />

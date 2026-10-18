@@ -6,7 +6,7 @@ export const deliveryStatuses = ['REQUESTED', 'MATCHED', 'PAID_ESCROW', 'PICKED_
 export type DeliveryStatus = typeof deliveryStatuses[number];
 export type VerificationLevel = 'UNVERIFIED' | 'ID_VERIFIED' | 'FULLY_VERIFIED';
 export interface MarketTraveler {
-  id: string; name: string; rating: number | null; ratingCount: number; verification: VerificationLevel;
+  id: string; name: string; rating: number | null; ratingCount: number; verification: VerificationLevel; role: 'TRAVELER' | 'AGENT';
 }
 export interface MarketTripInput {
   origin: string; destination: string; departureDate: string; expectedArrivalDate?: string;
@@ -25,7 +25,7 @@ export interface MarketOffer {
 }
 export interface MarketContact { name: string; email: string; phone: string | null }
 export interface MarketRequest extends MarketRequestInput {
-  id: string; senderId: string; status: DeliveryStatus;
+  id: string; senderId: string; senderName: string | null; status: DeliveryStatus;
   escrowStatus: 'NONE' | 'DEMO_HELD' | 'DEMO_RELEASED' | 'DEMO_REFUNDED';
   escrowAmount: number | null; acceptedOfferId: string | null; rating: number | null;
   disputeReason: string | null; offers: MarketOffer[]; createdAt: string;
@@ -33,8 +33,17 @@ export interface MarketRequest extends MarketRequestInput {
   senderContact: MarketContact | null; travelerContact: MarketContact | null;
 }
 export interface MarketMatch { request: MarketRequest; trip: MarketTrip; price: number; score: number }
+export interface DeliveryMessage {
+  id: string; authorId: string; authorName: string; authorRole: 'SENDER' | 'TRAVELER' | 'AGENT';
+  body: string; createdAt: string; sequenceNumber: number;
+}
+export interface PackageChatPage { messages: DeliveryMessage[]; nextBefore: number | null; writable: boolean }
 
 export const MarketplaceApi = {
+  messages: (id: string, before: number | null) =>
+    api.get<PackageChatPage>(`/api/marketplace/requests/${id}/messages`, { params: before == null ? {} : { before } }).then(r => r.data),
+  sendMessage: (id: string, body: string) =>
+    api.post<DeliveryMessage>(`/api/marketplace/requests/${id}/messages`, { body }).then(r => r.data),
   trips: () => api.get<MarketTrip[]>('/api/marketplace/trips').then(r => r.data),
   createTrip: (input: MarketTripInput) => api.post<MarketTrip>('/api/marketplace/trips', input).then(r => r.data),
   requests: () => api.get<MarketRequest[]>('/api/marketplace/requests').then(r => r.data),

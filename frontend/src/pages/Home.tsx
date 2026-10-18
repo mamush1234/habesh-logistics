@@ -22,7 +22,7 @@ const formatDate = (value: string) => new Date(`${value}T00:00:00`).toLocaleDate
 
 export function Home() {
   const { user } = useAuth();
-  const traveler = user?.role === 'TRAVELER';
+  const traveler = user?.role === 'TRAVELER' || user?.role === 'AGENT';
   const [mode, setMode] = useState<'send' | 'travel'>(traveler ? 'travel' : 'send');
   const [form, setForm] = useState({ from: '', to: '', date: '' });
   const [search, setSearch] = useState(form);

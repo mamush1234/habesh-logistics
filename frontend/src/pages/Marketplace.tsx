@@ -18,7 +18,7 @@ export function DemoNotice() {
   </p>;
 }
 export function TravelerReputation({ traveler }: { traveler: MarketTraveler }) {
-  return <p className="text-sm text-ink-600">{traveler.name} &middot; {traveler.rating == null ? 'Not yet rated' : `${traveler.rating.toFixed(1)}/5 (${traveler.ratingCount} ${traveler.ratingCount === 1 ? 'rating' : 'ratings'})`} &middot; {display(traveler.verification)}</p>;
+  return <p className="text-sm text-ink-600">{traveler.name} &middot; {traveler.role === 'AGENT' ? 'Agent' : 'Traveler'} &middot; {traveler.rating == null ? 'Not yet rated' : `${traveler.rating.toFixed(1)}/5 (${traveler.ratingCount} ${traveler.ratingCount === 1 ? 'rating' : 'ratings'})`} &middot; {display(traveler.verification)}</p>;
 }
 export function RequestCard({ request, score }: { request: MarketRequest; score?: number }) {
   return <article className="card space-y-3">
@@ -72,7 +72,7 @@ export function MarketRequestForm() {
     <h1 className="text-3xl font-bold">Post a delivery request</h1><DemoNotice />
     {selectedTrip && <TripCard trip={selectedTrip} />}
     {trips.isError && <p role="alert">Could not load the selected trip. <button className="underline" onClick={() => trips.refetch()}>Retry</button></p>}
-    <p className="text-sm">Travelers send offers, then you choose one. Posting does not reserve a trip. Do not include contact details in the public description.</p>
+    <p className="text-sm">Travelers and agents send offers, then you choose one. Posting does not reserve a trip. Do not include contact details in the public description.</p>
     <form className="card grid sm:grid-cols-2 gap-4" onSubmit={e => { e.preventDefault(); mutation.mutate(); }}>
       <label className="label">Pickup city<input className="input" required maxLength={100} value={form.pickupCity} onChange={e => setForm({ ...form, pickupCity: e.target.value })} /></label>
       <label className="label">Destination city<input className="input" required maxLength={100} value={form.destinationCity} onChange={e => setForm({ ...form, destinationCity: e.target.value })} /></label>
@@ -125,6 +125,7 @@ function TripForm() {
 
 export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tripsOnly?: boolean; myPackagesOnly?: boolean }) {
   const { user } = useAuth();
+  const canOffer = user?.role === 'TRAVELER' || user?.role === 'AGENT';
   const qc = useQueryClient();
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
@@ -139,15 +140,15 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
   const filtered = requests.data?.filter(r => (!myPackagesOnly || r.senderId === user?.id)
     && (!status || r.status === status) && `${r.pickupCity} ${r.destinationCity} ${r.description}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="space-y-6">
-    <div className="flex flex-wrap justify-between items-center gap-3"><h1 className="text-3xl font-bold">{myPackagesOnly ? 'My packages' : user?.role === 'SENDER' ? 'Traveler trips' : tripsOnly ? 'My traveler trips' : user?.role === 'TRAVELER' ? 'Sender requests' : 'Delivery marketplace'}</h1>
+    <div className="flex flex-wrap justify-between items-center gap-3"><h1 className="text-3xl font-bold">{myPackagesOnly ? 'My packages' : user?.role === 'SENDER' ? 'Traveler / agent trips' : tripsOnly ? 'My delivery trips' : canOffer ? 'Sender requests' : 'Delivery marketplace'}</h1>
       {user?.role === 'SENDER' && <Link to="/send" className="btn btn-brand">Post a request</Link>}
       {!myPackagesOnly && (user?.role === 'SENDER'
         ? <Link className="btn btn-ghost" to="/my-shipments">My packages</Link>
-        : <Link className="btn btn-ghost" to={tripsOnly ? '/marketplace' : '/traveler'}>{tripsOnly ? 'Browse requests' : user?.role === 'TRAVELER' ? 'Post a trip' : 'Traveler trips'}</Link>)}
+        : <Link className="btn btn-ghost" to={tripsOnly ? '/marketplace' : '/traveler'}>{tripsOnly ? 'Browse requests' : canOffer ? 'Post a trip' : 'Delivery trips'}</Link>)}
     </div>
     {myPackagesOnly ? <p className="text-sm text-ink-500">Only packages you created are listed here. Open a package to review offers and delivery progress.</p> : <DemoNotice />}
-    {tripsOnly && user?.role === 'TRAVELER' && <TripForm />}
-    {user?.role === 'TRAVELER' && <section className="card space-y-3">
+    {tripsOnly && canOffer && <TripForm />}
+    {canOffer && <section className="card space-y-3">
       <h2 className="text-xl font-semibold">Suggested requests for your trip</h2>
       <label className="label">Your trip<select className="input" value={tripId} onChange={e => setTripId(e.target.value)}>
         <option value="">Choose a trip</option>{owned.map(t => <option key={t.id} value={t.id}>{t.origin} to {t.destination} - {t.departureDate}</option>)}
@@ -168,10 +169,10 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
       {filtered?.length === 0 && <p>No delivery requests found.</p>}
       <div className="grid md:grid-cols-2 gap-4">{filtered?.map(r => <RequestCard key={r.id} request={r} />)}</div>
     </>}
-    {!myPackagesOnly && <><section className="space-y-4"><h2 className="text-2xl font-bold">{user?.role === 'TRAVELER' ? 'Your posted trips' : 'Available traveler trips'}</h2>
+    {!myPackagesOnly && <><section className="space-y-4"><h2 className="text-2xl font-bold">{canOffer ? 'Your posted trips' : 'Available traveler / agent trips'}</h2>
       {trips.isPending && <p role="status">Loading trips...</p>}
       {trips.isError && <p role="alert">Could not load trips. <button className="underline" onClick={() => trips.refetch()}>Retry</button></p>}
-      <div className="grid md:grid-cols-2 gap-4">{(user?.role === 'TRAVELER' ? owned : trips.data)?.map(t => <div key={t.id} className="space-y-2"><TripCard trip={t} />
+      <div className="grid md:grid-cols-2 gap-4">{(canOffer ? owned : trips.data)?.map(t => <div key={t.id} className="space-y-2"><TripCard trip={t} />
         {user?.role === 'SENDER' && <Link className="btn btn-primary" to={`/send?travel=${encodeURIComponent(t.id)}`}>Post a request for this trip</Link>}
         {user?.role === 'ADMIN' && <div className="flex flex-wrap gap-2">{(['UNVERIFIED', 'ID_VERIFIED', 'FULLY_VERIFIED'] as const).map(level =>
           <button key={level} className="btn btn-ghost text-xs" disabled={verify.isPending || level === t.traveler.verification}
