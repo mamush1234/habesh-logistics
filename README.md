@@ -4,11 +4,21 @@
 The public home page uses a responsive green-and-gold design with a centered
 hero, sender/traveler search tabs, upcoming trip cards, How It Works, safety
 cards, and a traveler signup call to action. City searches ignore punctuation,
-case, and repeated spaces. The sender's date filter limits trip previews by
-departure, not guaranteed arrival; full matching checks arrival and other rules.
-Signed-in travelers and agents see open sender requests instead of other carriers' trips,
-with a departure-date filter inside each request's drop-off/deadline window.
-Request data is never fetched for anonymous visitors. Public cards show real
+case, and repeated spaces. Signed-in travelers/agents default to sender requests;
+senders default to traveler/agent trips. Selecting **I am a traveler** or
+**I am a sender** switches the results immediately, including for anonymous visitors.
+After normal login, travelers land on the sender-request marketplace and senders
+land on the traveler-trip marketplace. **My trips** and **My packages** remain
+separate navigation destinations. Explicit login return links, admin/agent
+operational dashboards and the required-password-change gate remain unchanged.
+Sender requests have a left-side product photo (or an explicit no-photo placeholder)
+and a route title such as **DC to Addis Ababa**. Photos that fail to load show a retry.
+The traveler's departure-date filter matches each request's inclusive availability window.
+Trip lists on the homepage and authenticated marketplace default to newest **posted**
+first, not latest departure; customers can choose oldest posted or soonest departure
+and inclusive departure-from/through filters. The homepage search also supports an
+exact departure date. Full matching still checks arrival, capacity and item rules.
+Public cards show real
 capacity and dates, not fabricated identities, ratings, or per-kilogram prices.
 Escrow remains explicitly labeled as a simulation. Navigation leads to existing
 signup and marketplace flows, preserving selected trips across login/registration.
@@ -25,11 +35,17 @@ SMTP configuration have been removed. The historical V8 Flyway migration/table i
 retained to preserve existing database migration history; old invitation links no
 longer grant access. Existing accounts and passwords are unchanged.
 
-Only `GET /api/public/info` and `GET /api/public/travel` are public GET APIs.
-The latter returns up to six upcoming traveler marketplace trips with remaining capacity:
-ID, route, departure date and available kilograms only. No names, notes, contact
-details, operational manifests or packages are public. All package, tracking,
-calendar, queue and admin data remain authenticated and role-restricted.
+Public GET APIs include `/api/public/info`, `/api/public/travel`,
+`/api/public/requests`, and `/api/public/requests/{id}/product-photo`.
+Travel returns all upcoming active-carrier trips with remaining capacity, newest
+posted first: ID, route, departure date, available kilograms and posting timestamp.
+Request previews contain only ID, route, availability/deadline, item type, weight,
+offered price, photo availability and posting timestamp. Only open, unexpired
+requests from active senders (or admin-managed guest requests) qualify. Public photo
+access uses the same availability checks and `Cache-Control: no-store`; matched,
+closed and expired request photos return 404. No names, account IDs, descriptions,
+offers, history, contacts, manifests or tracking data are public. Full request
+details and making offers still require login and existing role permissions.
 
 # Private guest sender requests
 
@@ -37,8 +53,32 @@ Admins open **Admin dashboard > Guest sender links** (`/admin/guest-links`),
 enter a private reference label, and create a link to share with one sender.
 The full link is displayed only at creation; copy it before leaving the page.
 Unused links can be revoked. Links expire seven days after creation and accept
-exactly one request. Guests do not register, receive a password, or gain account
-access. This is separate from the removed account-invitation feature.
+exactly one request. No sign-in is needed to submit. For a previously unregistered
+email, submission creates an active sender account and sender profile with the
+provided name, normalized email and required phone number. This is separate from
+the removed account-invitation feature.
+
+The success page shows the new login email and a unique, cryptographically random
+temporary password **once**. Save it before leaving or refreshing. The password is
+stored only as a BCrypt hash; it is not available in link checks, retries, admin
+lists, logs, or browser storage. Credential-bearing responses use `Cache-Control:
+no-store`. If the response is lost, contact the team; retrying cannot recover or
+reset credentials. No automatic password recovery/delivery is provided.
+
+New accounts must set a different password at first login (at least 12 characters,
+at most 72 UTF-8 bytes). Until then, authenticated APIs allow only viewing their
+own account and changing their password. After changing it, all previous sessions
+are revoked and the customer signs in again. Existing accounts are not forced to
+change passwords.
+
+If the email is already registered (regardless of role or active state), submission
+does not change that account or password and does not attach the request to it.
+The receipt asks the customer to sign in with their existing credentials; the
+request remains exclusively admin-managed. Supplying an email does not prove
+ownership of an existing account. For newly created accounts only, the original
+request appears in **My packages** as read-only, including its photo and timeline.
+The customer cannot accept/decline offers, fund escrow, change status, rate,
+use chat, or convert that request. Future normal requests retain the regular workflow.
 
 The guest form at `/guest-request#token=...` requires full name, email, phone,
 pickup/destination cities, availability/deadline, item type/description, weight,
@@ -46,9 +86,10 @@ offered USD price, and a product photo. JPEG/PNG inputs are resized in the
 browser using the existing photo helper, then validated and re-encoded on the
 server (maximum 2 MB, 4096 pixels per side, 16 million pixels). This removes
 embedded image metadata. Guests should not include contacts in public package
-descriptions or photos. After submission, the page says:
+descriptions or photos. The form explains that open request route/photo previews
+are public while contact details stay private. After submission, the page says:
 **"Your request has been received. We will contact you once we find a traveler."**
-Reloads and duplicate submissions return this receipt, not private contact data;
+Reloads and duplicate submissions return this receipt without credentials or contact data;
 concurrent retries cannot create duplicate requests.
 
 Guest requests enter the existing marketplace and notify active admins,
@@ -57,9 +98,10 @@ product photo, match their own trips, and submit offers as usual. Admins see
 the guest's contact details immediately and accept/decline offers on the guest's
 behalf. They can also simulate escrow funding and manage delivery status.
 Regular account-owned requests still require the owning sender to select an
-offer and fund demo escrow. Guest email, phone, and name stay admin-only,
-including after matching and simulated funding. Guest coordination is handled
-directly by the admin, not through account chat or guest account access.
+offer and fund demo escrow. Guest email, phone, and name remain hidden from
+travelers/agents, including after matching and simulated funding. Admins and
+the newly created owner account can see the guest's own contact details.
+Guest coordination is handled directly by the admin, not through account chat.
 **Contacting the sender is a manual admin action; no email or SMS is sent.**
 
 API endpoints:
@@ -69,6 +111,9 @@ API endpoints:
   availability or a receipt.
 - Anonymous `POST /api/guest-requests/submit` accepts `{token, name, email, phone,
   photoDataUrl, request}`; `request` uses the normal marketplace request input.
+  It returns `{status, message, credentials, accountMessage}`; `credentials` is
+  `{email, temporaryPassword}` only on the first successful new-account submission
+  and is `null` for existing-email submissions and retries.
 - Authenticated `GET /api/marketplace/requests/{id}/product-photo` requires access
   to that request. Large photo data is excluded from marketplace list DTOs.
 
@@ -78,6 +123,9 @@ Treat the full link as a secret: anyone possessing an unused link can submit
 that sender's request. The guest API client is separate from account sessions.
 Flyway migration **V14** adds the link table and nullable sender/guest fields,
 preserving existing account requests and chat history.
+Migration **V16** adds a separate guest account owner and a required-password-change
+flag, defaulting to false for existing users. Existing guest requests are not
+retroactively assigned or provisioned accounts.
 
 Create links on your deployed HTTPS website before sharing externally.
 `localhost`/`127.0.0.1` development links work only on the computer running the app.
@@ -92,7 +140,8 @@ Scheduled pickup requires an address and date. The new shipment reuses the
 request's destination city, description, weight, and product photo. Documents
 map to `DOCUMENT`, medicine to `MEDICINE`, and other item categories to `OTHER`.
 Normal configured shipment fees apply, not the marketplace offered price;
-operational payment starts `PENDING`. No guest user account is created.
+operational payment starts `PENDING`. Conversion creates no additional account;
+the source request remains read-only for its newly provisioned sender, if any.
 
 Conversion generates a normal tracking number and tracking events, then opens
 the standard operational path: payment, pickup/drop-off, receiving-agent and
@@ -100,7 +149,9 @@ traveler assignment, luggage consolidation, trip assignment, and delivery.
 The **Manage shipment** link opens the admin shipment list with its row
 highlighted; **View tracking** opens the normal authenticated tracking screen.
 The admin shipment row links back to the source request and private contact details.
-Only admins may retrieve guest sender contacts. Operational manifests label the
+Operational shipment access remains unchanged and admin-managed; the new sender
+can view the original marketplace request, not the converted shipment. Only
+admins retrieve guest contacts through operational shipment APIs. Manifests label the
 sender as **Guest sender**, rather than exposing guest identity/contact fields.
 
 The conversion transaction closes the source marketplace request as `CANCELLED`

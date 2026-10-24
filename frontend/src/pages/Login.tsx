@@ -19,7 +19,7 @@ export function Login() {
     try {
       const u = await login(email, password);
       toast.success(`Welcome, ${u.firstName}`);
-      navigate(next, { replace: true });
+      navigate(u.mustChangePassword ? '/account' : next, { replace: true });
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Invalid credentials');
     } finally {

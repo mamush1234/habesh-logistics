@@ -6,7 +6,7 @@ import { AuthApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
 
 export function Account() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [current, setCurrent] = useState('');
   const [password, setPassword] = useState('');
@@ -25,6 +25,7 @@ export function Account() {
     } finally { setBusy(false); }
   }}>
     <h1 className="text-2xl font-bold">Change password</h1>
+    {user?.mustChangePassword && <p role="note">You are using a temporary password. Set a different password before accessing your account. After changing it, sign in again with your new password.</p>}
     <label className="label" htmlFor="current-password">Current password</label>
     <input id="current-password" className="input" type="password" autoComplete="current-password"
       required value={current} onChange={e => setCurrent(e.target.value)} />

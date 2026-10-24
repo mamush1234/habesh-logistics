@@ -13,7 +13,7 @@ export function PackageNotifications() {
   const query = useQuery({
     queryKey: ['package-notifications', user?.id],
     queryFn: PackageQueueApi.notifications,
-    enabled: !!user,
+    enabled: !!user && !user.mustChangePassword,
     refetchInterval: 15_000,
   });
   const read = useMutation({
@@ -21,7 +21,7 @@ export function PackageNotifications() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['package-notifications', user?.id] }),
     onError: () => toast.error('Could not mark notification as read'),
   });
-  if (!user) return null;
+  if (!user || user.mustChangePassword) return null;
   const unread = query.data?.filter(n => !n.readAt).length ?? 0;
 
   return <div className="relative">

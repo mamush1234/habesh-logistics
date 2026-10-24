@@ -21,6 +21,19 @@ public class PublicController {
         return travel.publicTrips();
     }
 
+    @GetMapping("/requests")
+    public java.util.List<com.habeshlist.dto.ApiDtos.PublicRequestDto> requests() {
+        return travel.publicRequests();
+    }
+
+    @GetMapping("/requests/{id}/product-photo")
+    public org.springframework.http.ResponseEntity<Map<String, String>> productPhoto(
+            @org.springframework.web.bind.annotation.PathVariable java.util.UUID id) {
+        return org.springframework.http.ResponseEntity.ok()
+                .cacheControl(org.springframework.http.CacheControl.noStore())
+                .body(Map.of("photoDataUrl", travel.publicProductPhoto(id)));
+    }
+
     @Value("${app.alexandria.address}")
     private String alexandriaAddress;
     @Value("${app.alexandria.hours}")

@@ -29,7 +29,7 @@ public final class MarketplaceDtos {
     public record TravelerDto(UUID id, String name, Double rating, long ratingCount, VerificationLevel verification, Role role) {}
     public record TripDto(UUID id, TravelerDto traveler, String origin, String destination, LocalDate departureDate,
             LocalDate expectedArrivalDate, BigDecimal capacityKg, BigDecimal availableKg,
-            Set<ItemType> allowedItems, Set<ItemType> blockedItems) {}
+            Set<ItemType> allowedItems, Set<ItemType> blockedItems, Instant createdAt) {}
     public record OfferDto(UUID id, UUID tripId, TravelerDto traveler, BigDecimal price, String message,
             OfferStatus status, double score) {}
     public record ContactDto(String name, String email, String phone) {}

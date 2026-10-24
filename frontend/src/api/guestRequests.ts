@@ -8,6 +8,10 @@ export interface GuestLink {
   status: 'OPEN' | 'SUBMITTED' | 'EXPIRED' | 'REVOKED'; requestId: string | null;
 }
 export interface GuestStatus { status: GuestLink['status']; message: string }
+export interface GuestSubmissionResult extends GuestStatus {
+  credentials: { email: string; temporaryPassword: string } | null;
+  accountMessage: string;
+}
 export interface GuestSubmission {
   token: string; name: string; email: string; phone: string; photoDataUrl: string; request: MarketRequestInput;
 }
@@ -26,5 +30,5 @@ export const GuestRequestsApi = {
   list: () => api.get<GuestLink[]>('/api/admin/guest-request-links').then(r => r.data),
   revoke: (id: string) => api.post<GuestLink>(`/api/admin/guest-request-links/${id}/revoke`).then(r => r.data),
   check: (token: string) => guest.post<GuestStatus>('/api/guest-requests/check', { token }).then(r => r.data),
-  submit: (input: GuestSubmission) => guest.post<GuestStatus>('/api/guest-requests/submit', input).then(r => r.data),
+  submit: (input: GuestSubmission) => guest.post<GuestSubmissionResult>('/api/guest-requests/submit', input).then(r => r.data),
 };

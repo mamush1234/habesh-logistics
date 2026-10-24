@@ -71,7 +71,7 @@ public class TravelAnnouncementService {
                         && a.getTotalCapacityKg() != null)
                 .map(a -> new ApiDtos.PublicTravelDto(a.getId(), a.getOrigin(), a.getDestination(),
                         a.getDepartureDate(), a.getTotalCapacityKg()
-                        .subtract(shipments.travelWeight(a.getId(), TravelBookingStatus.APPROVED))))
+                        .subtract(shipments.travelWeight(a.getId(), TravelBookingStatus.APPROVED)), a.getCreatedAt()))
                 .filter(a -> a.availableCapacityKg().signum() > 0).limit(6).toList();
     }
 

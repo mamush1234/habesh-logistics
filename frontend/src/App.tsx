@@ -23,6 +23,10 @@ import { AdminGuestLinks } from './pages/admin/GuestLinks';
 
 export default function App() {
   const { user } = useAuth();
+  if (user?.mustChangePassword) return <Layout><Routes>
+    <Route path="/account" element={<Account />} />
+    <Route path="*" element={<Navigate to="/account" replace />} />
+  </Routes></Layout>;
   return (
     <Layout>
       <Routes>
@@ -38,9 +42,9 @@ export default function App() {
         <Route path="/marketplace/requests/:id" element={<ProtectedRoute><MarketplaceRequest /></ProtectedRoute>} />
         <Route path="/dashboard" element={
           user?.role === 'ADMIN' ? <Navigate to="/admin" /> :
-          user?.role === 'TRAVELER' ? <Navigate to="/traveler" /> :
+          user?.role === 'TRAVELER' ? <Navigate to="/marketplace" /> :
           user?.role === 'AGENT' ? <Navigate to="/agent" /> :
-          <ProtectedRoute><Marketplace myPackagesOnly /></ProtectedRoute>
+          <ProtectedRoute><Marketplace /></ProtectedRoute>
         } />
         <Route path="/my-shipments" element={<ProtectedRoute roles={['SENDER']}><Marketplace myPackagesOnly /></ProtectedRoute>} />
         <Route path="/legacy-shipments" element={<ProtectedRoute><SenderDashboard /></ProtectedRoute>} />

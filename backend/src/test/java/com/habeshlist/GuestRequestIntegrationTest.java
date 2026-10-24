@@ -30,6 +30,9 @@ class GuestRequestIntegrationTest {
     @Autowired GuestRequestLinkRepository links;
     @Autowired DeliveryRequestRepository requests;
     @Autowired ShipmentRepository shipments;
+    @Autowired UserRepository users;
+    @Autowired SenderProfileRepository senderProfiles;
+    @Autowired org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
     @Autowired jakarta.persistence.EntityManager entityManager;
     private final String adminBase = "/api/admin/guest-request-links";
     private final String publicBase = "/api/guest-requests";
@@ -276,25 +279,36 @@ class GuestRequestIntegrationTest {
     }
 
     @Test
-    void guestCanSubmitWithoutAccountAndOnlyAdminCanSeeContacts() throws Exception {
+    void guestCanSubmitWithoutSigningInAndCarrierCannotSeeContacts() throws Exception {
         String a = admin(), t = traveler(), s = sender();
         JsonNode created = link(a);
         String token = created.path("token").asText();
         assertEquals("OPEN", ok("POST", publicBase + "/check", null, Map.of("token", token)).path("status").asText());
-        JsonNode receipt = ok("POST", publicBase + "/submit", null, submission(token));
+        var input = submission(token);
+        String email = "visible-guest-" + UUID.randomUUID() + "@example.com";
+        input.put("email", email);
+        JsonNode receipt = ok("POST", publicBase + "/submit", null, input);
         assertEquals("SUBMITTED", receipt.path("status").asText());
         assertTrue(receipt.path("message").asText().contains("We will contact you once we find a traveler"));
-        assertFalse(receipt.toString().contains("guest@example.com"));
         JsonNode request = requestFor(created, a);
         assertTrue(request.path("guestRequest").asBoolean());
-        assertTrue(request.path("senderId").isNull());
-        assertEquals("guest@example.com", request.path("senderContact").path("email").asText());
+        assertTrue(request.path("senderId").isTextual());
+        assertEquals(email, request.path("senderContact").path("email").asText());
         assertTrue(request.path("hasProductPhoto").asBoolean());
+        JsonNode publicView = ok("GET", "/api/public/requests", null, null).findParents("id").stream()
+                .filter(row -> row.path("id").equals(request.path("id"))).findFirst().orElseThrow();
+        assertFalse(publicView.toString().contains(email));
+        assertFalse(publicView.has("senderId"));
+        assertFalse(publicView.has("senderName"));
+        assertFalse(publicView.has("senderContact"));
+        assertFalse(publicView.has("description"));
+        call("GET", "/api/public/requests/" + request.path("id").asText() + "/product-photo", null, null)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.photoDataUrl").isString());
         String path = "/api/marketplace/requests/" + request.path("id").asText();
         JsonNode carrierView = ok("GET", path, t, null);
         assertTrue(carrierView.path("senderName").isNull());
         assertTrue(carrierView.path("senderContact").isNull());
-        assertFalse(carrierView.toString().contains("guest@example.com"));
+        assertFalse(carrierView.toString().contains(email));
         assertFalse(carrierView.toString().contains("data:image"));
         assertTrue(ok("GET", path + "/product-photo", t, null).path("photoDataUrl").asText().startsWith("data:image/jpeg;base64,"));
         call("GET", path, s, null).andExpect(status().isForbidden());
@@ -339,6 +353,10 @@ class GuestRequestIntegrationTest {
     void missingContactsPhotoInvalidDatesAndInvalidImagesDoNotConsumeLink() throws Exception {
         String token = link(admin()).path("token").asText();
         Map<String, Object> input = submission(token);
+        String email = "invalid-" + UUID.randomUUID() + "@example.com";
+        input.put("email", email);
+        long usersBefore = users.count();
+        long requestsBefore = requests.count();
         for (String key : List.of("name", "phone", "email", "photoDataUrl")) {
             var invalid = new HashMap<>(input);
             invalid.remove(key);
@@ -358,7 +376,144 @@ class GuestRequestIntegrationTest {
         bad.put("request", dates);
         call("POST", publicBase + "/submit", null, bad).andExpect(status().isBadRequest());
         assertEquals("OPEN", ok("POST", publicBase + "/check", null, Map.of("token", token)).path("status").asText());
+        assertEquals(usersBefore, users.count());
+        assertEquals(requestsBefore, requests.count());
+        assertFalse(users.existsByEmailIgnoreCase(email));
         ok("POST", publicBase + "/submit", null, input);
+    }
+
+    @Test
+    void newAccountGetsOneTimeCredentialsPasswordGateAndReadOnlyRequest() throws Exception {
+        String a = admin();
+        JsonNode created = link(a);
+        String token = created.path("token").asText();
+        Map<String, Object> input = submission(token);
+        String email = "new-guest-" + UUID.randomUUID() + "@example.com";
+        input.put("email", email.toUpperCase(Locale.ROOT));
+        long before = users.count();
+        var response = call("POST", publicBase + "/submit", null, input).andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store")).andReturn().getResponse();
+        JsonNode receipt = om.readTree(response.getContentAsString());
+        String password = receipt.path("credentials").path("temporaryPassword").asText();
+        assertEquals(email, receipt.path("credentials").path("email").asText());
+        assertTrue(password.matches("[A-Za-z0-9_-]{32}"));
+        var account = users.findByEmailIgnoreCase(email).orElseThrow();
+        assertEquals(com.habeshlist.entity.enums.Role.SENDER, account.getRole());
+        assertTrue(account.isActive());
+        assertTrue(account.isMustChangePassword());
+        assertEquals("+1 (202) 555-0123", account.getPhone());
+        assertEquals("Guest", account.getFirstName());
+        assertEquals("Sender", account.getLastName());
+        assertTrue(senderProfiles.existsById(account.getId()));
+        assertNotEquals(password, account.getPasswordHash());
+        assertTrue(passwordEncoder.matches(password, account.getPasswordHash()));
+        String hash = account.getPasswordHash();
+        assertEquals(before + 1, users.count());
+        JsonNode retry = ok("POST", publicBase + "/submit", null, input);
+        assertTrue(retry.path("credentials").isNull());
+        assertFalse(ok("POST", publicBase + "/check", null, Map.of("token", token)).toString().contains(password));
+        assertFalse(ok("GET", adminBase, a, null).toString().contains(password));
+        assertEquals(hash, account.getPasswordHash());
+        assertEquals(before + 1, users.count());
+        String session = login(email, password);
+        assertTrue(ok("GET", "/api/me", session, null).path("mustChangePassword").asBoolean());
+        for (String path : List.of("/api/marketplace/requests", "/api/shipments", "/api/admin/dashboard",
+                "/api/package-queue/notifications")) {
+            call("GET", path, session, null).andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("PASSWORD_CHANGE_REQUIRED"));
+        }
+        call("POST", "/api/marketplace/requests", session, requestInput()).andExpect(status().isForbidden());
+        for (String newPassword : List.of(password, "short")) {
+            mvc.perform(put("/api/me/password").header("Authorization", "Bearer " + session)
+                    .contentType(MediaType.APPLICATION_JSON).content(om.writeValueAsString(
+                            Map.of("currentPassword", password, "newPassword", newPassword))))
+                    .andExpect(status().isBadRequest());
+            assertTrue(account.isMustChangePassword());
+        }
+        mvc.perform(put("/api/me/password").header("Authorization", "Bearer " + session)
+                .contentType(MediaType.APPLICATION_JSON).content(om.writeValueAsString(
+                        Map.of("currentPassword", "wrong-password", "newPassword", "My-private-password-2026"))))
+                .andExpect(status().isUnauthorized());
+        assertTrue(account.isMustChangePassword());
+        mvc.perform(put("/api/me/password").header("Authorization", "Bearer " + session)
+                .contentType(MediaType.APPLICATION_JSON).content(om.writeValueAsString(
+                        Map.of("currentPassword", password, "newPassword", "My-private-password-2026"))))
+                .andExpect(status().isNoContent());
+        assertFalse(account.isMustChangePassword());
+        call("GET", "/api/me", session, null).andExpect(status().isUnauthorized());
+        call("POST", "/api/auth/login", null, Map.of("email", email, "password", password))
+                .andExpect(status().isUnauthorized());
+        session = login(email, "My-private-password-2026");
+        assertFalse(ok("GET", "/api/me", session, null).path("mustChangePassword").asBoolean());
+        JsonNode request = requestFor(created, a);
+        String path = "/api/marketplace/requests/" + request.path("id").asText();
+        assertEquals(account.getId().toString(), request.path("senderId").asText());
+        assertTrue(ok("GET", "/api/marketplace/requests", session, null).toString().contains(request.path("id").asText()));
+        assertEquals(request.path("id"), ok("GET", path, session, null).path("id"));
+        assertFalse(ok("GET", path, session, null).path("timeline").isEmpty());
+        call("GET", path + "/product-photo", session, null).andExpect(status().isOk());
+        call("GET", path, sender(), null).andExpect(status().isForbidden());
+        JsonNode other = guestRequest(a);
+        call("GET", "/api/marketplace/requests/" + other.path("id").asText(), session, null).andExpect(status().isForbidden());
+        call("GET", path + "/matches", session, null).andExpect(status().isForbidden());
+        call("GET", path + "/messages", session, null).andExpect(status().isForbidden());
+        JsonNode trip = ok("POST", "/api/marketplace/trips", traveler(), Map.of("origin", route, "destination", "Addis Ababa",
+                "departureDate", LocalDate.now().plusDays(2).toString(), "capacityKg", 10,
+                "allowedItems", List.of("DOCUMENTS"), "blockedItems", List.of()));
+        JsonNode offered = ok("POST", path + "/offers", traveler(),
+                Map.of("tripId", trip.path("id").asText(), "price", 25));
+        String offerId = offered.path("offers").get(0).path("id").asText();
+        for (String action : List.of("accept", "decline", "withdraw"))
+            call("POST", path + "/offers/" + offerId + "/" + action, session, null).andExpect(status().isForbidden());
+        call("POST", path + "/demo-escrow", session, null).andExpect(status().isForbidden());
+        call("POST", path + "/rating", session, Map.of("rating", 5)).andExpect(status().isForbidden());
+        mvc.perform(put(path + "/status").header("Authorization", "Bearer " + session)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"CANCELLED\"}")).andExpect(status().isForbidden());
+        call("POST", convertPath(request), session, conversionInput()).andExpect(status().isForbidden());
+        assertEquals("MATCHED", ok("POST", path + "/offers/" + offerId + "/accept", a, null).path("status").asText());
+        ok("POST", convertPath(request), a, conversionInput());
+        assertEquals("CANCELLED", ok("GET", path, session, null).path("status").asText());
+    }
+
+    @Test
+    void existingEmailsDoNotChangeAccountsOrGrantRequestOwnershipAndPasswordsAreUnique() throws Exception {
+        String a = admin();
+        for (String email : List.of("sender@example.com", "admin@habeshlist.com", "traveler@example.com", "agent@example.com")) {
+            var user = users.findByEmailIgnoreCase(email).orElseThrow();
+            String hash = user.getPasswordHash(), firstName = user.getFirstName(), phone = user.getPhone();
+            var role = user.getRole();
+            JsonNode created = link(a);
+            user.setActive(false);
+            int version = user.getCredentialVersion();
+            var input = submission(created.path("token").asText());
+            input.put("email", email.toUpperCase(Locale.ROOT));
+            long before = users.count();
+            JsonNode receipt = ok("POST", publicBase + "/submit", null, input);
+            assertTrue(receipt.path("credentials").isNull());
+            assertTrue(receipt.path("accountMessage").asText().contains("existing password"));
+            assertEquals(before, users.count());
+            assertEquals(hash, user.getPasswordHash());
+            assertEquals(role, user.getRole());
+            assertEquals(firstName, user.getFirstName());
+            assertEquals(phone, user.getPhone());
+            assertEquals(version, user.getCredentialVersion());
+            assertFalse(user.isActive());
+            assertFalse(user.isMustChangePassword());
+            user.setActive(true);
+            JsonNode request = requestFor(created, a);
+            assertTrue(request.path("senderId").isNull());
+            assertNull(requests.findById(UUID.fromString(request.path("id").asText())).orElseThrow().getGuestAccount());
+            if (role == com.habeshlist.entity.enums.Role.SENDER)
+                call("GET", "/api/marketplace/requests/" + request.path("id").asText(), sender(), null)
+                        .andExpect(status().isForbidden());
+        }
+        Set<String> passwords = new HashSet<>();
+        for (int i = 0; i < 2; i++) {
+            var input = submission(link(a).path("token").asText());
+            input.put("email", "unique-" + UUID.randomUUID() + "@example.com");
+            passwords.add(ok("POST", publicBase + "/submit", null, input).path("credentials").path("temporaryPassword").asText());
+        }
+        assertEquals(2, passwords.size());
     }
 
     @Test
@@ -398,19 +553,24 @@ class GuestRequestIntegrationTest {
         String a = admin();
         JsonNode created = link(a);
         Map<String, Object> input = submission(created.path("token").asText());
+        String email = "concurrent-" + UUID.randomUUID() + "@example.com";
+        input.put("email", email);
         var pool = Executors.newFixedThreadPool(2);
         var gate = new CountDownLatch(1);
         try {
-            Callable<Integer> submit = () -> {
+            Callable<JsonNode> submit = () -> {
                 assertTrue(gate.await(10, TimeUnit.SECONDS));
-                return call("POST", publicBase + "/submit", null, input).andReturn().getResponse().getStatus();
+                return ok("POST", publicBase + "/submit", null, input);
             };
             var first = pool.submit(submit);
             var second = pool.submit(submit);
             gate.countDown();
-            assertEquals(200, first.get(30, TimeUnit.SECONDS));
-            assertEquals(200, second.get(30, TimeUnit.SECONDS));
+            var results = List.of(first.get(30, TimeUnit.SECONDS), second.get(30, TimeUnit.SECONDS));
+            assertTrue(results.stream().allMatch(r -> r.path("status").asText().equals("SUBMITTED")));
+            assertEquals(1, results.stream().filter(r -> !r.path("credentials").isNull()).count());
             assertEquals(1, requests.findAllByOrderByCreatedAtDesc().stream().filter(r -> route.equals(r.getPickupCity())).count());
+            assertEquals(1, users.findAll().stream().filter(u -> email.equals(u.getEmail())).count());
+            assertTrue(users.findByEmailIgnoreCase(email).orElseThrow().isMustChangePassword());
         } finally { pool.shutdownNow(); }
     }
 }

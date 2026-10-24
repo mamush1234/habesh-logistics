@@ -24,16 +24,19 @@ public class GuestRequestService {
     private final UserRepository users;
     private final PackageNotificationService notifications;
     private final Clock clock;
+    private final AuthService auth;
     private final SecureRandom random = new SecureRandom();
 
     public GuestRequestService(GuestRequestLinkRepository links, DeliveryRequestRepository requests,
-            DeliveryEventRepository events, UserRepository users, PackageNotificationService notifications, Clock clock) {
+            DeliveryEventRepository events, UserRepository users, PackageNotificationService notifications, Clock clock,
+            AuthService auth) {
         this.links = links;
         this.requests = requests;
         this.events = events;
         this.users = users;
         this.notifications = notifications;
         this.clock = clock;
+        this.auth = auth;
     }
 
     private String hash(String token) {
@@ -90,17 +93,32 @@ public class GuestRequestService {
                 .orElseThrow(() -> new NotFoundException("Guest link not found")));
     }
     @Transactional
-    public GuestStatusDto submit(SubmitInput input) {
+    public SubmissionDto submit(SubmitInput input) {
         GuestRequestLink link = links.findByTokenHashForUpdate(hash(input.token()))
                 .orElseThrow(() -> new NotFoundException("Guest link not found"));
-        if (link.getRequest() != null) return guestStatus(link);
+        if (link.getRequest() != null) return new SubmissionDto("SUBMITTED", RECEIPT, null,
+                "Credentials are shown only when a new account is first created. Sign in with your saved password, or contact our team for help.");
         if (!status(link).equals("OPEN")) throw new BadRequestException("This guest link has expired or was revoked. Contact us for a new link.");
         var data = input.request();
         if (data.availableFrom().isBefore(LocalDate.now(clock.withZone(ZoneId.systemDefault())))
                 || data.deadline().isBefore(data.availableFrom()))
             throw new BadRequestException("Choose an available date today or later and a deadline on or after that date");
         String photo = GuestProductPhoto.prepare(input.photoDataUrl());
+        String email = input.email().strip().toLowerCase(Locale.ROOT);
+        User account = null;
+        AccountCredentials credentials = null;
+        if (!users.existsByEmailIgnoreCase(email)) {
+            byte[] bytes = new byte[24];
+            random.nextBytes(bytes);
+            String password = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+            String[] name = input.name().strip().split("\\s+", 2);
+            account = auth.createPrivilegedUser(name[0], name.length > 1 ? name[1] : "", email,
+                    input.phone().strip(), password, com.habeshlist.entity.enums.Role.SENDER);
+            account.setMustChangePassword(true);
+            credentials = new AccountCredentials(email, password);
+        }
         DeliveryRequest request = requests.save(DeliveryRequest.builder()
+                .guestAccount(account)
                 .guestName(input.name().strip()).guestEmail(input.email().strip()).guestPhone(input.phone().strip())
                 .productPhoto(photo).pickupCity(data.pickupCity().strip()).destinationCity(data.destinationCity().strip())
                 .availableFrom(data.availableFrom()).deadline(data.deadline()).itemType(data.itemType())
@@ -111,6 +129,8 @@ public class GuestRequestService {
                 .createdAt(clock.instant()).sequenceNumber(0).build());
         link.setRequest(request);
         notifications.broadcastRequest(request);
-        return guestStatus(link);
+        return new SubmissionDto("SUBMITTED", RECEIPT, credentials, credentials == null
+                ? "If you already have an account, sign in with your existing password. Your account and password were not changed, and this request remains admin-managed."
+                : "Your sender account is ready. Save these credentials now; they will not be shown again. Change your temporary password at first login. Your request is visible in My packages and remains admin-managed.");
     }
 }

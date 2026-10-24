@@ -128,6 +128,86 @@ class MarketplaceIntegrationTest {
     }
 
     @Test
+    void publicRequestPreviewsExposeOnlyOpenPackageFieldsAndGatePhotosByAvailability() throws Exception {
+        String s = sender();
+        JsonNode r = request(s);
+        UUID id = UUID.fromString(r.path("id").asText());
+        var stored = requests.findById(id).orElseThrow();
+        stored.setProductPhoto("data:image/jpeg;base64,dGVzdA==");
+        String photoPath = "/api/public/requests/" + id + "/product-photo";
+        JsonNode preview = ok("GET", "/api/public/requests", null, null).findParents("id").stream()
+                .filter(row -> row.path("id").asText().equals(id.toString())).findFirst().orElseThrow();
+        Set<String> fields = new HashSet<>();
+        preview.fieldNames().forEachRemaining(fields::add);
+        assertEquals(Set.of("id", "pickupCity", "destinationCity", "availableFrom", "deadline", "itemType",
+                "weightKg", "offeredPrice", "hasProductPhoto", "createdAt"), fields);
+        assertEquals(origin, preview.path("pickupCity").asText());
+        assertTrue(preview.path("hasProductPhoto").asBoolean());
+        call("GET", photoPath, null, null).andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.photoDataUrl").value(stored.getProductPhoto()));
+        for (String privatePath : List.of(path(r), path(r) + "/product-photo", path(r) + "/offers", path(r) + "/messages"))
+            call("GET", privatePath, null, null).andExpect(status().isUnauthorized());
+        for (DeliveryStatus status : DeliveryStatus.values()) {
+            if (status == DeliveryStatus.REQUESTED) continue;
+            stored.setStatus(status);
+            assertFalse(ok("GET", "/api/public/requests", null, null).toString().contains(id.toString()));
+            call("GET", photoPath, null, null).andExpect(status().isNotFound());
+        }
+        stored.setStatus(DeliveryStatus.REQUESTED);
+        stored.setDeadline(LocalDate.now().minusDays(1));
+        assertFalse(ok("GET", "/api/public/requests", null, null).toString().contains(id.toString()));
+        call("GET", photoPath, null, null).andExpect(status().isNotFound());
+        stored.setDeadline(LocalDate.now());
+        assertTrue(ok("GET", "/api/public/requests", null, null).toString().contains(id.toString()));
+        stored.getSender().setActive(false);
+        assertFalse(ok("GET", "/api/public/requests", null, null).toString().contains(id.toString()));
+        call("GET", photoPath, null, null).andExpect(status().isNotFound());
+        stored.getSender().setActive(true);
+        stored.setProductPhoto(null);
+        call("GET", photoPath, null, null).andExpect(status().isNotFound());
+        call("GET", "/api/public/requests/" + UUID.randomUUID() + "/product-photo", null, null)
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void publicTripsAreNewestPostedFirstAndIncludeTripsBeyondOldSixItemPreview() throws Exception {
+        String t = traveler();
+        List<UUID> ids = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            var input = tripInput();
+            input.put("departureDate", date(10 - i));
+            input.put("expectedArrivalDate", date(11));
+            JsonNode trip = ok("POST", base + "/trips", t, input);
+            UUID id = UUID.fromString(trip.path("id").asText());
+            ids.add(id);
+            trips.findById(id).orElseThrow().setCreatedAt(java.time.Instant.parse("2026-01-01T00:00:00Z").plusSeconds(i));
+            assertTrue(trip.hasNonNull("createdAt"));
+        }
+        List<String> published = new ArrayList<>();
+        for (JsonNode row : ok("GET", "/api/public/travel", null, null)) {
+            if (ids.stream().anyMatch(id -> id.toString().equals(row.path("id").asText()))) {
+                published.add(row.path("id").asText());
+                Set<String> fields = new HashSet<>();
+                row.fieldNames().forEachRemaining(fields::add);
+                assertEquals(Set.of("id", "origin", "destination", "departureDate", "availableCapacityKg", "createdAt"), fields);
+            }
+        }
+        Collections.reverse(ids);
+        assertEquals(ids.stream().map(UUID::toString).toList(), published);
+        var latest = trips.findById(ids.get(0)).orElseThrow();
+        latest.setReservedKg(latest.getCapacityKg());
+        assertFalse(ok("GET", "/api/public/travel", null, null).toString().contains(latest.getId().toString()));
+        latest.setReservedKg(java.math.BigDecimal.ZERO);
+        latest.setDepartureDate(LocalDate.now().minusDays(1));
+        assertFalse(ok("GET", "/api/public/travel", null, null).toString().contains(latest.getId().toString()));
+        latest.setDepartureDate(LocalDate.now());
+        assertTrue(ok("GET", "/api/public/travel", null, null).toString().contains(latest.getId().toString()));
+        latest.getTraveler().setActive(false);
+        assertFalse(ok("GET", "/api/public/travel", null, null).toString().contains(latest.getId().toString()));
+    }
+
+    @Test
     void namesStayPrivateUntilAcceptanceAndContactsUntilFundingForTravelersAndAgents() throws Exception {
         String s = sender(), a = admin(), other = newTraveler();
         for (String selected : List.of(traveler(), login("agent@example.com", "Agent@123"))) {
@@ -669,7 +749,7 @@ class MarketplaceIntegrationTest {
         JsonNode data = ok("GET", "/api/public/travel", null, null);
         assertTrue(data.findValues("id").contains(trip.get("id")));
         for (JsonNode summary : data)
-            assertEquals(Set.of("id", "origin", "destination", "departureDate", "availableCapacityKg"),
+            assertEquals(Set.of("id", "origin", "destination", "departureDate", "availableCapacityKg", "createdAt"),
                     om.convertValue(summary, Map.class).keySet());
         matched(s, t, trip);
         assertFalse(ok("GET", "/api/public/travel", null, null).findValues("id").contains(trip.get("id")));

@@ -13,7 +13,11 @@ export interface MarketTripInput {
   capacityKg: number; allowedItems: ItemType[]; blockedItems: ItemType[];
 }
 export interface MarketTrip extends MarketTripInput {
-  id: string; traveler: MarketTraveler; availableKg: number;
+  id: string; traveler: MarketTraveler; availableKg: number; createdAt: string;
+}
+export interface PublicRequest {
+  id: string; pickupCity: string; destinationCity: string; availableFrom: string; deadline: string;
+  itemType: ItemType; weightKg: number; offeredPrice: number; hasProductPhoto: boolean; createdAt: string;
 }
 export interface MarketRequestInput {
   pickupCity: string; destinationCity: string; availableFrom: string; deadline: string;

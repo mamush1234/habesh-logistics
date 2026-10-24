@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { PublicApi } from '../api/endpoints';
-import { MarketplaceApi } from '../api/marketplace';
 import { useAuth } from '../auth/AuthContext';
+import { RequestThumbnail } from '../components/RequestThumbnail';
+import { filterTrips, initialTripFilters, TripListFilters } from '../components/TripListFilters';
 
 const steps = [
   { title: 'Post or search', description: 'Senders describe the parcel. Travelers share their route and spare luggage space.' },
@@ -23,20 +24,27 @@ const formatDate = (value: string) => new Date(`${value}T00:00:00`).toLocaleDate
 export function Home() {
   const { user } = useAuth();
   const traveler = user?.role === 'TRAVELER' || user?.role === 'AGENT';
-  const [mode, setMode] = useState<'send' | 'travel'>(traveler ? 'travel' : 'send');
+  const [selectedMode, setMode] = useState<'send' | 'travel' | null>(null);
+  const mode = selectedMode ?? (traveler ? 'travel' : 'send');
+  const showingRequests = mode === 'travel';
+  const canReviewRequests = traveler || user?.role === 'ADMIN';
   const [form, setForm] = useState({ from: '', to: '', date: '' });
   const [search, setSearch] = useState(form);
+  const [tripFilters, setTripFilters] = useState(initialTripFilters);
   const results = useRef<HTMLElement>(null);
-  useEffect(() => { if (traveler) setMode('travel'); }, [traveler]);
-  const travel = useQuery({ queryKey: ['public-travel'], queryFn: PublicApi.travel, enabled: !traveler, refetchInterval: 60_000 });
-  const requests = useQuery({ queryKey: ['marketplace', 'requests', user?.id], queryFn: MarketplaceApi.requests, enabled: traveler, refetchInterval: 15_000 });
+  const travel = useQuery({ queryKey: ['public-travel'], queryFn: PublicApi.travel, enabled: !showingRequests, refetchInterval: 60_000 });
+  const requests = useQuery({ queryKey: ['public-requests'], queryFn: PublicApi.requests, enabled: showingRequests, refetchInterval: 15_000 });
   const postTripTo = !user ? '/register?role=TRAVELER&next=%2Ftraveler'
     : traveler ? '/traveler' : user.role === 'SENDER' ? '/my-shipments' : '/marketplace';
-  const trips = travel.data?.filter(t => includesCity(t.origin, search.from) && includesCity(t.destination, search.to)
-    && (!search.date || t.departureDate <= search.date));
-  const packages = requests.data?.filter(r => r.status === 'REQUESTED' && includesCity(r.pickupCity, search.from)
+  const trips = travel.data && filterTrips(travel.data.filter(t => includesCity(t.origin, search.from) && includesCity(t.destination, search.to)
+    && (!search.date || t.departureDate === search.date)), tripFilters);
+  const packages = requests.data?.filter(r => includesCity(r.pickupCity, search.from)
     && includesCity(r.destinationCity, search.to) && (!search.date || (r.availableFrom <= search.date && r.deadline >= search.date)));
-  const showingRequests = traveler;
+  function selectMode(next: 'send' | 'travel') {
+    setMode(next);
+    setForm({ ...form, date: '' });
+    setSearch({ ...search, date: '' });
+  }
 
   return <div className="landing-page" id="home">
     <section className="landing-hero" aria-labelledby="hero-title">
@@ -51,43 +59,46 @@ export function Home() {
         results.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
       }}>
         <div className="search-modes" role="group" aria-label="Delivery type">
-          <button type="button" aria-pressed={mode === 'send'} className={mode === 'send' ? 'selected' : ''} onClick={() => { setMode('send'); setForm({ ...form, date: '' }); }}>I want to send</button>
-          <button type="button" aria-pressed={mode === 'travel'} className={mode === 'travel' ? 'selected' : ''} onClick={() => { setMode('travel'); setForm({ ...form, date: '' }); }}>I'm traveling</button>
+          <button type="button" aria-pressed={mode === 'send'} className={mode === 'send' ? 'selected' : ''} onClick={() => selectMode('send')}>I am a sender</button>
+          <button type="button" aria-pressed={mode === 'travel'} className={mode === 'travel' ? 'selected' : ''} onClick={() => selectMode('travel')}>I am a traveler</button>
         </div>
         <div className="search-fields">
           <label>From<input maxLength={100} placeholder="Washington DC" value={form.from} onChange={e => setForm({ ...form, from: e.target.value })} /></label>
           <label>To<input maxLength={100} placeholder="Addis Ababa" value={form.to} onChange={e => setForm({ ...form, to: e.target.value })} /></label>
-          <label>{mode === 'send' && !traveler ? 'Delivery by' : 'Departure date'}<input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></label>
-          {mode === 'travel' && !traveler
-            ? <Link to={postTripTo} className="home-button home-button-gold" data-testid="cta-travel">{!user ? 'Find packages' : user.role === 'SENDER' ? 'My packages' : 'Open marketplace'}</Link>
-            : <button className="home-button home-button-gold" type="submit">{showingRequests ? 'Find packages' : 'Find travelers'}</button>}
+          <label>Departure date<input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></label>
+          <button className="home-button home-button-gold" type="submit">{showingRequests ? 'Find packages' : 'Find travelers'}</button>
         </div>
-        <p className="search-note">{showingRequests ? 'Search open sender requests. Trip suggestions check the full delivery window, item rules, and capacity.' : 'Search upcoming trip previews by city and departure date. Confirm arrival before the delivery deadline when matching.'}</p>
+        <p className="search-note">{showingRequests ? 'Browse open sender requests. The departure date must fall within the package availability window. Sign in as a traveler or agent to review details and make offers.' : 'Browse upcoming traveler posts, newest first. Filter by exact departure date above or use the date range below. Confirm arrival before the delivery deadline when matching.'}</p>
       </form>
     </section>
 
     <section className="home-section" id="trips" ref={results} aria-labelledby="trips-title">
       <div className="home-section-heading">
-        <h2 id="trips-title">{showingRequests ? 'Sender requests' : 'Upcoming trips'}</h2>
+        <h2 id="trips-title">{showingRequests ? 'Sender requests' : 'Traveler / agent trips'}</h2>
         <Link to={postTripTo} className="home-text-link">{user?.role === 'SENDER' ? 'My packages' : user && !traveler ? 'Open marketplace' : 'Post your trip'}</Link>
       </div>
       {showingRequests ? <>
         {requests.isPending && <p role="status">Finding sender requests...</p>}
         {requests.isError && <p role="alert">Could not load requests. <button className="home-text-link" onClick={() => requests.refetch()}>Try again</button></p>}
         {packages?.length === 0 && <p className="home-empty">No open requests match this search. Try another city or date, or <Link className="home-text-link" to="/marketplace">browse sender requests</Link>.</p>}
-        <div className="home-trip-grid">{packages?.map(r => <article key={r.id} className="home-trip-card">
-          <h3>{r.pickupCity} to {r.destinationCity}</h3>
-          <p>Drop-off {formatDate(r.availableFrom)} &middot; Deliver by {formatDate(r.deadline)}</p>
-          <div className="home-trip-details"><span>{r.weightKg} kg &middot; {r.itemType.toLowerCase()}</span><strong>${r.offeredPrice.toFixed(2)}</strong></div>
-          <Link className="home-button home-button-outline" to={`/marketplace/requests/${r.id}`}>Review request</Link>
+        <div className="home-request-list">{packages?.map(r => <article key={r.id} className="home-trip-card home-request-card">
+          <RequestThumbnail id={r.id} hasPhoto={r.hasProductPhoto} publicPreview />
+          <div className="home-request-content">
+            <h3>{r.pickupCity} to {r.destinationCity}</h3>
+            <p>Drop-off {formatDate(r.availableFrom)} &middot; Deliver by {formatDate(r.deadline)}</p>
+            <div className="home-trip-details"><span>{r.weightKg} kg &middot; {r.itemType.toLowerCase()}</span><strong>${r.offeredPrice.toFixed(2)}</strong></div>
+            <Link className="home-button home-button-outline" to={canReviewRequests ? `/marketplace/requests/${r.id}` : `/login?next=${encodeURIComponent(`/marketplace/requests/${r.id}`)}`}>{canReviewRequests ? 'Review request' : 'Sign in as a traveler to review'}</Link>
+          </div>
         </article>)}</div>
       </> : <>
+        <TripListFilters value={tripFilters} onChange={setTripFilters} />
         {travel.isPending && <p role="status">Finding upcoming trips...</p>}
         {travel.isError && <p role="alert">Could not load trips. <button className="home-text-link" onClick={() => travel.refetch()}>Try again</button></p>}
         {trips?.length === 0 && <p className="home-empty">No upcoming trips match this search. Try another city or date, or <Link className="home-text-link" to={postTripTo}>get started</Link>.</p>}
         <div className="home-trip-grid">{trips?.map(t => <article key={t.id} className="home-trip-card">
           <h3>{t.origin} to {t.destination}</h3>
           <p>Departs {formatDate(t.departureDate)} &middot; {t.availableCapacityKg} kg available</p>
+          <p>Posted {new Date(t.createdAt).toLocaleDateString()}</p>
           <div className="home-trip-details"><span>Traveler details stay private</span><strong>USD offers</strong></div>
           <Link className="home-button home-button-outline" data-testid="cta-send" to={user && user.role !== 'SENDER' ? '/marketplace' : `/send?travel=${encodeURIComponent(t.id)}`}>{user && user.role !== 'SENDER' ? 'Open marketplace' : 'Request space'}</Link>
         </article>)}</div>

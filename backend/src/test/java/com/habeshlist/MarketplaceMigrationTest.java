@@ -54,6 +54,12 @@ class MarketplaceMigrationTest {
             assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
                     () -> jdbc.update("INSERT INTO shipments (id) VALUES (?)", UUID.randomUUID()));
             assertEquals(guestId, jdbc.queryForObject("SELECT source_request_id FROM shipments WHERE id = ?", UUID.class, shipmentId));
+            new ResourceDatabasePopulator(new ClassPathResource("db/migration/V16__guest_sender_accounts.sql")).execute(source);
+            assertFalse(jdbc.queryForObject("SELECT must_change_password FROM users WHERE id = ?", Boolean.class, userId));
+            assertNull(jdbc.queryForObject("SELECT guest_account_id FROM delivery_requests WHERE id = ?", UUID.class, guestId));
+            jdbc.update("UPDATE delivery_requests SET guest_account_id = ? WHERE id = ?", userId, guestId);
+            assertEquals(userId, jdbc.queryForObject("SELECT guest_account_id FROM delivery_requests WHERE id = ?", UUID.class, guestId));
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM delivery_messages", Integer.class));
         } catch (java.sql.SQLException ex) {
             throw new AssertionError("Migration connection failed", ex);
         }

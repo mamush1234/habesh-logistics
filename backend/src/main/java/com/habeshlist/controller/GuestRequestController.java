@@ -27,5 +27,8 @@ public class GuestRequestController {
     @PostMapping("/api/guest-requests/check")
     public GuestStatusDto check(@Valid @RequestBody TokenInput input) { return service.check(input); }
     @PostMapping("/api/guest-requests/submit")
-    public GuestStatusDto submit(@Valid @RequestBody SubmitInput input) { return service.submit(input); }
+    public org.springframework.http.ResponseEntity<SubmissionDto> submit(@Valid @RequestBody SubmitInput input) {
+        return org.springframework.http.ResponseEntity.ok()
+                .cacheControl(org.springframework.http.CacheControl.noStore()).body(service.submit(input));
+    }
 }

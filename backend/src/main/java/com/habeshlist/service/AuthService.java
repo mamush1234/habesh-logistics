@@ -80,7 +80,11 @@ public class AuthService {
             throw new BadCredentialsException("Invalid credentials");
         }
         validateNewPassword(req.newPassword());
+        if (user.isMustChangePassword() && passwordEncoder.matches(req.newPassword(), user.getPasswordHash())) {
+            throw new BadRequestException("Choose a new password different from your temporary password");
+        }
         user.setPasswordHash(passwordEncoder.encode(req.newPassword()));
+        user.setMustChangePassword(false);
         user.setCredentialVersion(user.getCredentialVersion() + 1);
     }
 

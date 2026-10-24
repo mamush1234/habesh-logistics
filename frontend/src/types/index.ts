@@ -8,6 +8,7 @@ export interface User {
   phone?: string;
   role: Role;
   active: boolean;
+  mustChangePassword: boolean;
   createdAt: string;
 }
 
@@ -32,6 +33,7 @@ export interface PublicTravel {
   destination: string;
   departureDate: string;
   availableCapacityKg: number;
+  createdAt: string;
 }
 
 export interface Recipient {

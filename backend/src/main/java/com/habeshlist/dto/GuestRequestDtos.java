@@ -19,6 +19,8 @@ public final class GuestRequestDtos {
     public record LinkDto(UUID id, String label, Instant createdAt, Instant expiresAt, String status, UUID requestId) {}
     public record CreatedLinkDto(LinkDto link, String token) {}
     public record GuestStatusDto(String status, String message) {}
+    public record AccountCredentials(String email, String temporaryPassword) {}
+    public record SubmissionDto(String status, String message, AccountCredentials credentials, String accountMessage) {}
     public record ConvertInput(
             @NotNull @Valid com.habeshlist.dto.request.RequestDtos.RecipientRequest recipient,
             @NotBlank @Size(max = 100) String destinationCountry,

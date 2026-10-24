@@ -68,11 +68,14 @@ public class MarketplaceService {
     }
     private boolean sender(DeliveryRequest r) { return r.getSender() != null && r.getSender().getId().equals(actorId()); }
     private boolean managesSender(DeliveryRequest r) { return sender(r) || (r.getSender() == null && admin()); }
+    private boolean guestOwner(DeliveryRequest r) {
+        return r.getGuestAccount() != null && r.getGuestAccount().getId().equals(actorId());
+    }
     private boolean carrier(DeliveryRequest r) {
         return r.getAcceptedOffer() != null && r.getAcceptedOffer().getTraveler().getId().equals(actorId());
     }
     private boolean visible(DeliveryRequest r) {
-        return admin() || sender(r) || carrier(r)
+        return admin() || sender(r) || guestOwner(r) || carrier(r)
                 || (SecurityUtils.currentUser().role() != Role.SENDER && r.getStatus() == DeliveryStatus.REQUESTED);
     }
 
@@ -106,8 +109,29 @@ public class MarketplaceService {
         return trips.findAllByOrderByDepartureDateAscCreatedAtAsc().stream()
                 .filter(t -> !t.getDepartureDate().isBefore(today()) && t.getTraveler().isActive()
                         && available(t).signum() > 0)
-                .limit(6).map(t -> new ApiDtos.PublicTravelDto(t.getId(), t.getOrigin(), t.getDestination(),
-                        t.getDepartureDate(), available(t))).toList();
+                .sorted(Comparator.comparing(MarketTrip::getCreatedAt).reversed().thenComparing(MarketTrip::getId))
+                .map(t -> new ApiDtos.PublicTravelDto(t.getId(), t.getOrigin(), t.getDestination(),
+                        t.getDepartureDate(), available(t), t.getCreatedAt())).toList();
+    }
+
+    private boolean publiclyAvailable(DeliveryRequest r) {
+        return r.getStatus() == DeliveryStatus.REQUESTED && !r.getDeadline().isBefore(today())
+                && (r.getSender() == null || r.getSender().isActive());
+    }
+
+    @Transactional(readOnly = true)
+    public List<ApiDtos.PublicRequestDto> publicRequests() {
+        return requests.findAllByOrderByCreatedAtDesc().stream().filter(this::publiclyAvailable)
+                .map(r -> new ApiDtos.PublicRequestDto(r.getId(), r.getPickupCity(), r.getDestinationCity(),
+                        r.getAvailableFrom(), r.getDeadline(), r.getItemType(), r.getWeightKg(), r.getOfferedPrice(),
+                        r.getProductPhoto() != null, r.getCreatedAt())).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public String publicProductPhoto(UUID id) {
+        DeliveryRequest r = request(id);
+        if (!publiclyAvailable(r) || r.getProductPhoto() == null) throw new NotFoundException("Product photo not found");
+        return r.getProductPhoto();
     }
 
     @Transactional
@@ -205,7 +229,7 @@ public class MarketplaceService {
     private TripDto tripDto(MarketTrip t) {
         return new TripDto(t.getId(), traveler(t.getTraveler()), t.getOrigin(), t.getDestination(), t.getDepartureDate(),
                 t.getExpectedArrivalDate(), t.getCapacityKg(), available(t),
-                Set.copyOf(t.getAllowedItems()), Set.copyOf(t.getBlockedItems()));
+                Set.copyOf(t.getAllowedItems()), Set.copyOf(t.getBlockedItems()), t.getCreatedAt());
     }
 
     @Transactional(readOnly = true)
@@ -410,20 +434,22 @@ public class MarketplaceService {
                 o.getPrice(), o.getMessage(), o.getStatus(),
                 senderScore(o.getPrice(), min, traveler(o.getTraveler()))))
                 .sorted(Comparator.comparingDouble(OfferDto::score).reversed().thenComparing(OfferDto::id)).toList();
-        boolean participant = sender(r) || carrier(r) || admin();
+        boolean participant = sender(r) || guestOwner(r) || carrier(r) || admin();
         boolean contactsUnlocked = admin() || (r.getEscrowStatus() != EscrowStatus.NONE
                 && r.getEscrowStatus() != EscrowStatus.DEMO_REFUNDED);
-        return new RequestDto(r.getId(), r.getSender() == null ? null : r.getSender().getId(), r.getPickupCity(), r.getDestinationCity(), r.getAvailableFrom(),
+        return new RequestDto(r.getId(), r.getSender() == null
+                ? r.getGuestAccount() == null ? null : r.getGuestAccount().getId() : r.getSender().getId(),
+                r.getPickupCity(), r.getDestinationCity(), r.getAvailableFrom(),
                 r.getDeadline(), r.getItemType(), r.getDescription(), r.getWeightKg(), r.getOfferedPrice(), r.getStatus(),
                 r.getEscrowStatus(), r.getEscrowAmount(), r.getAcceptedOffer() == null ? null : r.getAcceptedOffer().getId(),
                 r.getRating(), participant ? r.getDisputeReason() : null, offerDtos,
                 participant ? events.findByRequestIdOrderBySequenceNumberAsc(r.getId()).stream()
                         .map(e -> new EventDto(e.getStatus(), e.getDescription(), e.getCreatedAt())).toList() : List.of(),
                 r.getSender() == null
-                        ? admin() ? new ContactDto(r.getGuestName(), r.getGuestEmail(), r.getGuestPhone()) : null
+                        ? admin() || guestOwner(r) ? new ContactDto(r.getGuestName(), r.getGuestEmail(), r.getGuestPhone()) : null
                         : sender(r) || (participant && contactsUnlocked) ? contact(r.getSender()) : null,
-                participant && contactsUnlocked && r.getAcceptedOffer() != null ? contact(r.getAcceptedOffer().getTraveler()) : null,
-                r.getCreatedAt(), r.getSender() == null ? admin() ? r.getGuestName() : null
+                (sender(r) || carrier(r) || admin()) && contactsUnlocked && r.getAcceptedOffer() != null ? contact(r.getAcceptedOffer().getTraveler()) : null,
+                r.getCreatedAt(), r.getSender() == null ? admin() || guestOwner(r) ? r.getGuestName() : null
                         : sender(r) || admin() || carrier(r)
                             ? r.getSender().getFirstName() + " " + r.getSender().getLastName() : null,
                 r.getSender() == null, r.getProductPhoto() != null,

@@ -14,6 +14,7 @@ import java.util.*;
 public class DeliveryRequest {
     @Id @GeneratedValue private UUID id;
     @ManyToOne(fetch = FetchType.LAZY) private User sender;
+    @ManyToOne(fetch = FetchType.LAZY) private User guestAccount;
     @Column(length = 120) private String guestName;
     @Column(length = 254) private String guestEmail;
     @Column(length = 40) private String guestPhone;

@@ -1,5 +1,6 @@
 import { api } from './client';
 import { z } from 'zod';
+import { itemTypes } from './marketplace';
 import type {
   AuthResponse, Shipment, PublicTracking, TrackingEvent,
   Trip, Luggage, AdminStats, ReferralStats, PublicInfo, PublicTravel, User, RegisterRequest,
@@ -18,10 +19,19 @@ export const AuthApi = {
 
 const publicTravelSchema = z.array(z.object({
   id: z.string().uuid(), origin: z.string(), destination: z.string(),
-  departureDate: z.string(), availableCapacityKg: z.number().positive(),
+  departureDate: z.string(), availableCapacityKg: z.number().positive(), createdAt: z.string().datetime(),
+}));
+const publicRequestsSchema = z.array(z.object({
+  id: z.string().uuid(), pickupCity: z.string(), destinationCity: z.string(),
+  availableFrom: z.string(), deadline: z.string(), itemType: z.enum(itemTypes),
+  weightKg: z.number().positive(), offeredPrice: z.number().positive(),
+  hasProductPhoto: z.boolean(), createdAt: z.string().datetime(),
 }));
 
 export const PublicApi = {
+  requests: () => api.get<unknown>('/api/public/requests').then(r => publicRequestsSchema.parse(r.data)),
+  productPhoto: (id: string) => api.get<{ photoDataUrl: string }>(`/api/public/requests/${id}/product-photo`)
+    .then(r => r.data.photoDataUrl),
   travel: (): Promise<PublicTravel[]> => api.get<unknown>('/api/public/travel')
     .then(r => publicTravelSchema.parse(r.data)),
   info: () => api.get<PublicInfo>('/api/public/info').then(r => r.data),

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { GuestRequestsApi } from '../api/guestRequests';
@@ -29,6 +29,7 @@ function GuestRequestForm({ token }: { token: string }) {
   const [preparingPhoto, setPreparingPhoto] = useState(false);
   const photoVersion = useRef(0);
   const mutation = useMutation({
+    gcTime: 0,
     mutationFn: () => GuestRequestsApi.submit({ token, ...contact, photoDataUrl: photo,
       request: { ...form, weightKg: Number(form.weightKg), offeredPrice: Number(form.offeredPrice) } }),
     onSuccess: () => { setContact({ name: '', email: '', phone: '' }); setPhoto(''); setForm(initialRequestForm()); },
@@ -41,12 +42,22 @@ function GuestRequestForm({ token }: { token: string }) {
   if (result.status !== 'OPEN') return <section className="card max-w-2xl mx-auto space-y-3" role="status">
     <h1 className="text-2xl font-bold">{result.status === 'SUBMITTED' ? 'Request received' : 'Link unavailable'}</h1>
     <p>{result.message}</p>
-    {result.status === 'SUBMITTED' && <p>You do not need an account. Our team will use the email or phone number you provided to coordinate with you.</p>}
+    {result.status === 'SUBMITTED' && <>
+      <p>Our team will use the email or phone number you provided to coordinate with you. Your request remains admin-managed.</p>
+      <p>{mutation.data?.accountMessage ?? 'If a sender account was created, sign in with the credentials you saved after submission. Temporary passwords cannot be shown again; contact our team if you need help.'}</p>
+      {mutation.data?.credentials && <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-3">
+        <h2 className="text-xl font-bold">Save your new sender login</h2>
+        <p>These credentials are shown only once. Save them before leaving or refreshing this page. You must change the temporary password at first login.</p>
+        <label className="label">Login email<input className="input" readOnly value={mutation.data.credentials.email} onFocus={e => e.currentTarget.select()} /></label>
+        <label className="label">Temporary password<input className="input font-mono" readOnly autoComplete="off" value={mutation.data.credentials.temporaryPassword} onFocus={e => e.currentTarget.select()} /></label>
+      </div>}
+      <Link className="btn btn-brand" to="/login">Sign in</Link>
+    </>}
   </section>;
   return <div className="max-w-2xl mx-auto space-y-5">
     <h1 className="text-3xl font-bold">Send a package as a guest</h1>
-    <p>No account or password is required. Add your contact details and a clear photo of the product. We will contact you once we find a traveler.</p>
-    <p className="text-sm">Keep this link private. It expires seven days after creation and can be used for one request. Your contact details are visible only to our administrators; travelers review the package details and photo. Do not put names, phone numbers, addresses, or email in the description or photo.</p>
+    <p>No sign-in is required to submit. Email and phone are mandatory. For a new email, we create a sender account and show a unique temporary password once after submission. Existing accounts are not changed. Add a clear product photo. We will contact you once we find a traveler.</p>
+    <p className="text-sm">Keep this link private. It expires seven days after creation and can be used for one request. Your contact details are visible to administrators and, for a newly created account, to you after login. Open request previews show your route, product photo, dates, item type, weight, and price to visitors; reviewing details and making offers requires login. Do not put names, phone numbers, addresses, or email in the description or photo.</p>
     <DemoNotice />
     <form className="card grid sm:grid-cols-2 gap-4" onSubmit={e => {
       e.preventDefault();

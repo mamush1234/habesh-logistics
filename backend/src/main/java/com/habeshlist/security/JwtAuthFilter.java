@@ -57,6 +57,15 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                         res.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Session revoked. Sign in again.");
                         return;
                     }
+                    String path = req.getRequestURI().substring(req.getContextPath().length());
+                    boolean passwordAction = ("GET".equals(req.getMethod()) && path.equals("/api/me"))
+                            || ("PUT".equals(req.getMethod()) && path.equals("/api/me/password"));
+                    if (user.isMustChangePassword() && !passwordAction) {
+                        res.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                        res.setContentType("application/json");
+                        res.getWriter().write("{\"status\":403,\"error\":\"Forbidden\",\"code\":\"PASSWORD_CHANGE_REQUIRED\",\"message\":\"Change your temporary password before using your account\"}");
+                        return;
+                    }
                     AuthPrincipal principal = new AuthPrincipal(user.getId(), user.getEmail(), user.getRole());
                     UsernamePasswordAuthenticationToken auth =
                             new UsernamePasswordAuthenticationToken(principal, null,

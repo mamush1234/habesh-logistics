@@ -23,12 +23,12 @@ export function MarketplaceRequest() {
   const r = query.data;
   const sender = r?.senderId === user?.id;
   const admin = user?.role === 'ADMIN';
-  const managesSender = sender || (admin && r?.guestRequest);
+  const managesSender = (sender && !r?.guestRequest) || (admin && r?.guestRequest);
   const canOffer = user?.role === 'TRAVELER' || user?.role === 'AGENT';
   const accepted = r?.offers.find(o => o.id === r.acceptedOfferId);
   const carrier = accepted?.traveler.id === user?.id;
   const matches = useQuery({ queryKey: ['marketplace', 'request-matches', id, user?.id], queryFn: () => MarketplaceApi.requestMatches(id),
-    enabled: !!r && (sender || admin || canOffer) && r.status === 'REQUESTED', refetchInterval: 15_000 });
+    enabled: !!r && ((sender && !r.guestRequest) || admin || canOffer) && r.status === 'REQUESTED', refetchInterval: 15_000 });
   const photo = useQuery({ queryKey: ['marketplace', 'product-photo', id, user?.id], queryFn: () => MarketplaceApi.productPhoto(id),
     enabled: !!r?.hasProductPhoto, staleTime: 5 * 60_000 });
   const eligibleTrips = matches.data?.map(m => m.trip) ?? [];
@@ -49,7 +49,7 @@ export function MarketplaceRequest() {
       <p>{display(r.itemType)} &middot; {r.weightKg} kg &middot; Offered {money(r.offeredPrice)}</p>
       <p>Available {r.availableFrom} &middot; Deadline {r.deadline}</p>
       <p className="break-words">{r.description}</p>
-      {r.guestRequest && <p className="rounded-lg bg-blue-50 p-3 text-sm">Guest sender request. An administrator handles offers and contacts the sender directly. Guest contact details remain admin-only; package chat is not available for guest requests.</p>}
+      {r.guestRequest && <p className="rounded-lg bg-blue-50 p-3 text-sm">Admin-managed sender request. An administrator handles offers and contacts the sender directly. Newly created senders can view their own request but cannot change offers or processing. Package chat is not available for these requests.</p>}
       {r.hasProductPhoto && <div>
         <h3 className="font-semibold">Product photo</h3>
         {photo.isPending && <p role="status">Loading product photo...</p>}
@@ -78,7 +78,7 @@ export function MarketplaceRequest() {
         <button type="button" className="btn btn-brand" disabled={!selectedTrip || matches.isError || mutation.isPending} onClick={() => selectedTrip && act(() => MarketplaceApi.offer(id, selectedTrip.id, r.offeredPrice, message))}>Accept asking price {money(r.offeredPrice)}</button></div>
       <p className="text-sm">Accepting the asking price sends an offer. {r.guestRequest ? 'An admin must select you for the guest sender.' : 'The sender must still select you.'} Weight is reserved only after offer acceptance.</p>
     </form>}
-    <section className="card space-y-4">
+    {!(sender && r.guestRequest) && <section className="card space-y-4">
       <h2 className="text-xl font-bold">{sender || admin ? 'Traveler / agent offers (ranked)' : 'Your offers'}</h2>
       {r.offers.length === 0 && <p>No offers yet.</p>}
       {r.offers.map(o => <article key={o.id} className="border-t py-3 space-y-2">
@@ -92,8 +92,8 @@ export function MarketplaceRequest() {
         </div>
       </article>)}
       <p className="text-xs text-ink-500">Ranking: price 50%, completed-delivery ratings 30%, admin-assigned verification 20%. Lower prices favor senders; higher offered prices favor travelers. No rating history contributes zero rating points.</p>
-    </section>
-    {(sender || carrier || admin) && !r.convertedShipmentId && <section className="card space-y-4">
+    </section>}
+    {((sender && !r.guestRequest) || carrier || admin) && !r.convertedShipmentId && <section className="card space-y-4">
       <h2 className="text-xl font-bold">Delivery actions</h2>
       {managesSender && r.status === 'MATCHED' && <button className="btn btn-brand" disabled={mutation.isPending} onClick={() => act(() => MarketplaceApi.fund(id))}>Simulate escrow funding {money(accepted?.price ?? r.offeredPrice)} - no real payment</button>}
       <div className="flex flex-wrap gap-2">
@@ -116,7 +116,7 @@ export function MarketplaceRequest() {
       </div>}
       {r.rating != null && <p>Traveler rating: {r.rating}/5</p>}
     </section>}
-    {(sender || admin) && r.status === 'REQUESTED' && <section className="space-y-4">
+    {((sender && !r.guestRequest) || admin) && r.status === 'REQUESTED' && <section className="space-y-4">
       <h2 className="text-xl font-bold">Suggested traveler matches</h2>
       {matches.isPending && <p role="status">Finding compatible trips...</p>}
       {matches.isError && <p role="alert">Could not load matches. <button className="underline" onClick={() => matches.refetch()}>Retry</button></p>}

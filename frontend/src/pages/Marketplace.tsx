@@ -7,6 +7,8 @@ import { useAuth } from '../auth/AuthContext';
 import { MarketplaceApi, deliveryStatuses, itemTypes } from '../api/marketplace';
 import type { ItemType, MarketRequest, MarketTraveler, MarketTrip, VerificationLevel } from '../api/marketplace';
 import { initialRequestForm, MarketRequestFields, today } from '../components/MarketRequestFields';
+import { RequestThumbnail } from '../components/RequestThumbnail';
+import { filterTrips, initialTripFilters, TripListFilters } from '../components/TripListFilters';
 
 export const display = (value: string) => value.replaceAll('_', ' ');
 export const money = (value: number) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value);
@@ -22,14 +24,17 @@ export function TravelerReputation({ traveler }: { traveler: MarketTraveler }) {
   return <p className="text-sm text-ink-600">{traveler.name} &middot; {traveler.role === 'AGENT' ? 'Agent' : 'Traveler'} &middot; {traveler.rating == null ? 'Not yet rated' : `${traveler.rating.toFixed(1)}/5 (${traveler.ratingCount} ${traveler.ratingCount === 1 ? 'rating' : 'ratings'})`} &middot; {display(traveler.verification)}</p>;
 }
 export function RequestCard({ request, score }: { request: MarketRequest; score?: number }) {
-  return <article className="card space-y-3">
+  return <article className="card request-list-card">
+    <RequestThumbnail id={request.id} hasPhoto={request.hasProductPhoto} />
+    <div className="min-w-0 space-y-3">
     <div className="flex flex-wrap justify-between gap-2"><h2 className="text-lg font-bold">{request.pickupCity} &rarr; {request.destinationCity}</h2>
       <span className="text-xs font-bold rounded-full bg-blue-100 text-blue-900 px-3 py-1">{display(request.status)}</span></div>
     <p>{display(request.itemType)} &middot; {request.weightKg} kg &middot; Offered {money(request.offeredPrice)}</p>
     <p className="text-sm">Available {request.availableFrom} &middot; Deadline {request.deadline}</p>
     <p className="text-sm break-words">{request.description}</p>
     {score != null && <p className="text-sm font-semibold">Match score: {score.toFixed(2)}</p>}
-    <Link to={`/marketplace/requests/${request.id}`} className="btn btn-primary">View request and offers</Link>
+    <Link to={`/marketplace/requests/${request.id}`} className="btn btn-primary">{request.guestRequest ? 'View admin-managed request' : 'View request and offers'}</Link>
+    </div>
   </article>;
 }
 export function TripCard({ trip }: { trip: MarketTrip }) {
@@ -37,6 +42,7 @@ export function TripCard({ trip }: { trip: MarketTrip }) {
     <h2 className="text-lg font-bold">{trip.origin} &rarr; {trip.destination}</h2>
     <TravelerReputation traveler={trip.traveler} />
     <p>Departure {trip.departureDate}{trip.expectedArrivalDate && <> &middot; Arrival {trip.expectedArrivalDate}</>}</p>
+    <p className="text-sm text-ink-500">Posted {new Date(trip.createdAt).toLocaleDateString()}</p>
     <p>{trip.availableKg} of {trip.capacityKg} kg available</p>
     <p className="text-sm">Will carry: {trip.allowedItems.map(display).join(', ')}</p>
     <p className="text-sm">Will not carry: {trip.blockedItems.map(display).join(', ') || 'None specified'}</p>
@@ -115,6 +121,7 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
   const [tripId, setTripId] = useState('');
+  const [tripFilters, setTripFilters] = useState(initialTripFilters);
   const showRequests = myPackagesOnly || (!tripsOnly && user?.role !== 'SENDER');
   const requests = useQuery({ queryKey: ['marketplace', 'requests', user?.id], queryFn: MarketplaceApi.requests, enabled: showRequests, refetchInterval: 15_000 });
   const trips = useQuery({ queryKey: ['marketplace', 'trips', user?.id], queryFn: MarketplaceApi.trips, enabled: !myPackagesOnly, refetchInterval: 15_000 });
@@ -122,6 +129,7 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
   const verify = useMutation({ mutationFn: ({ id, level }: { id: string; level: VerificationLevel }) => MarketplaceApi.verify(id, level),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['marketplace'] }); toast.success('Verification updated'); }, onError: marketError });
   const owned = trips.data?.filter(t => t.traveler.id === user?.id) ?? [];
+  const visibleTrips = trips.data && filterTrips(canOffer ? owned : trips.data, tripFilters);
   const filtered = requests.data?.filter(r => (!myPackagesOnly || r.senderId === user?.id)
     && (!status || r.status === status) && `${r.pickupCity} ${r.destinationCity} ${r.description}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="space-y-6">
@@ -131,7 +139,7 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
         ? <Link className="btn btn-ghost" to="/my-shipments">My packages</Link>
         : <Link className="btn btn-ghost" to={tripsOnly ? '/marketplace' : '/traveler'}>{tripsOnly ? 'Browse requests' : canOffer ? 'Post a trip' : 'Delivery trips'}</Link>)}
     </div>
-    {myPackagesOnly ? <p className="text-sm text-ink-500">Only packages you created are listed here. Open a package to review offers and delivery progress.</p> : <DemoNotice />}
+    {myPackagesOnly ? <p className="text-sm text-ink-500">Only your packages are listed here. Open a package to view its progress. Requests submitted through a private guest link are read-only and managed by our team; for regular account requests, you manage offers.</p> : <DemoNotice />}
     {tripsOnly && canOffer && <TripForm />}
     {canOffer && <section className="card space-y-3">
       <h2 className="text-xl font-semibold">Suggested requests for your trip</h2>
@@ -152,12 +160,14 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
       {requests.isPending && <p role="status">Loading delivery requests...</p>}
       {requests.isError && <p role="alert">Could not load requests. <button className="underline" onClick={() => requests.refetch()}>Retry</button></p>}
       {filtered?.length === 0 && <p>No delivery requests found.</p>}
-      <div className="grid md:grid-cols-2 gap-4">{filtered?.map(r => <RequestCard key={r.id} request={r} />)}</div>
+      <div className="space-y-4">{filtered?.map(r => <RequestCard key={r.id} request={r} />)}</div>
     </>}
     {!myPackagesOnly && <><section className="space-y-4"><h2 className="text-2xl font-bold">{canOffer ? 'Your posted trips' : 'Available traveler / agent trips'}</h2>
+      <TripListFilters value={tripFilters} onChange={setTripFilters} />
       {trips.isPending && <p role="status">Loading trips...</p>}
       {trips.isError && <p role="alert">Could not load trips. <button className="underline" onClick={() => trips.refetch()}>Retry</button></p>}
-      <div className="grid md:grid-cols-2 gap-4">{(canOffer ? owned : trips.data)?.map(t => <div key={t.id} className="space-y-2"><TripCard trip={t} />
+      {visibleTrips?.length === 0 && <p>No trips match these dates.</p>}
+      <div className="grid md:grid-cols-2 gap-4">{visibleTrips?.map(t => <div key={t.id} className="space-y-2"><TripCard trip={t} />
         {user?.role === 'SENDER' && <Link className="btn btn-primary" to={`/send?travel=${encodeURIComponent(t.id)}`}>Post a request for this trip</Link>}
         {user?.role === 'ADMIN' && <div className="flex flex-wrap gap-2">{(['UNVERIFIED', 'ID_VERIFIED', 'FULLY_VERIFIED'] as const).map(level =>
           <button key={level} className="btn btn-ghost text-xs" disabled={verify.isPending || level === t.traveler.verification}

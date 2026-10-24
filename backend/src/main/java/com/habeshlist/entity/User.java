@@ -39,6 +39,9 @@ public class User {
     @Column(nullable = false)
     private int credentialVersion;
 
+    @Column(nullable = false)
+    private boolean mustChangePassword;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Role role;

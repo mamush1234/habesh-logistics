@@ -27,7 +27,7 @@ export function AdminGuestLinks() {
   return <div className="max-w-4xl mx-auto space-y-5">
     <Link className="underline" to="/admin">Back to admin dashboard</Link>
     <h1 className="text-3xl font-bold">Guest sender links</h1>
-    <p>Create a private link for one sender. No signup is required. Each link expires in seven days and accepts one package request. You will handle offers and contact the guest using their required email and phone.</p>
+    <p>Create a private link for one sender. Each link expires in seven days and accepts one package request. Email and phone are required. New emails get a sender account with a unique temporary password shown once to the customer; existing accounts are unchanged. You will handle offers and contact the sender directly.</p>
     <form className="card space-y-3" onSubmit={e => { e.preventDefault(); create.mutate(); }}>
       <label className="label">Private admin label<input className="input" required maxLength={120} value={label} onChange={e => setLabel(e.target.value)} placeholder="Sender name or reference" /></label>
       <button className="btn btn-brand" disabled={create.isPending || !label.trim()}>{create.isPending ? 'Creating...' : 'Create guest link'}</button>

@@ -25,7 +25,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
 
   const visible = navItems.filter(i => user && (i.public || i.roles?.includes(user.role)))
-    .filter(i => i.to !== '/send' || user?.role === 'SENDER');
+    .filter(i => i.to !== '/send' || user?.role === 'SENDER')
+    .filter(i => !user?.mustChangePassword || i.to === '/account');
 
   return (
     <div className={`min-h-screen flex flex-col ${landing ? 'landing-shell' : ''}`}>

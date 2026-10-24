@@ -81,6 +81,17 @@ h1, h2, h3 { @apply font-display tracking-tight; }
 .home-trip-details { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 4px 0 6px; flex: 1; }
 .home-trip-details strong { color: #0a6940; white-space: nowrap; }
 .home-trip-card .home-button { font-size: 16px; }
+.home-request-list { display: grid; gap: 20px; }
+.home-trip-card.home-request-card, .request-list-card { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 20px; align-items: start; }
+.home-request-content { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.home-request-content .home-button { align-self: start; width: auto; }
+.request-thumbnail { width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 12px; background: #f0eee5; border: 1px solid #dddfd5; }
+.request-thumbnail img { width: 100%; height: 100%; object-fit: contain; }
+.request-thumbnail > p, .request-thumbnail > div { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; text-align: center; font-size: 12px; }
+.request-photo-placeholder { color: #586159; }
+.trip-list-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 20px; }
+.trip-list-filters .label { flex: 1 1 180px; min-width: 0; }
+.trip-list-filters .input { width: 100%; min-width: 0; }
 .home-section-note { font-size: 13px; color: #626c62; margin-top: 20px; line-height: 1.6; }
 .home-section > .home-text-link { display: inline-block; margin-top: 14px; }
 .home-empty { color: #586159; background: #fff; border: 1px solid #dddfd5; border-radius: 14px; padding: 24px; }
@@ -122,6 +133,9 @@ h1, h2, h3 { @apply font-display tracking-tight; }
   .home-section-heading .home-text-link { font-size: 13px; text-align: right; }
   .home-trip-grid, .home-step-grid, .home-trust-grid { grid-template-columns: 1fr; gap: 18px; }
   .home-trip-card { padding: 22px; }
+  .home-trip-card.home-request-card, .request-list-card { grid-template-columns: 88px minmax(0, 1fr); gap: 12px; padding: 14px; }
+  .home-request-content .home-trip-details { flex-wrap: wrap; gap: 4px; }
+  .home-request-content .home-button { font-size: 14px; padding: 10px; }
   .home-step-grid { gap: 28px; margin-top: 28px; }
   .home-step-grid p { font-size: 16px; }
   .home-trust-grid { margin-top: 25px; }

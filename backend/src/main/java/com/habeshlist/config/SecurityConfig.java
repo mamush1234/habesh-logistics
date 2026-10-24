@@ -47,7 +47,8 @@ public class SecurityConfig {
                         "/api/auth/login", "/api/auth/register",
                         "/api/guest-requests/check", "/api/guest-requests/submit").permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.GET,
-                        "/api/public/info", "/api/public/travel").permitAll()
+                        "/api/public/info", "/api/public/travel", "/api/public/requests",
+                        "/api/public/requests/*/product-photo").permitAll()
                 .requestMatchers("/error").permitAll()
                 .requestMatchers("/api/shipments/guest").denyAll()
                 .requestMatchers("/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").hasRole("ADMIN")

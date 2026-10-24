@@ -14,17 +14,21 @@ public final class ApiDtos {
     private ApiDtos() {}
 
     public record UserDto(UUID id, String firstName, String lastName, String email,
-                          String phone, Role role, boolean active, Instant createdAt) {
+                          String phone, Role role, boolean active, Instant createdAt, boolean mustChangePassword) {
         public static UserDto from(User u) {
             return new UserDto(u.getId(), u.getFirstName(), u.getLastName(), u.getEmail(),
-                    u.getPhone(), u.getRole(), u.isActive(), u.getCreatedAt());
+                    u.getPhone(), u.getRole(), u.isActive(), u.getCreatedAt(), u.isMustChangePassword());
         }
     }
 
     public record AuthResponse(String token, long expiresInMs, UserDto user) {}
 
     public record PublicTravelDto(UUID id, String origin, String destination, LocalDate departureDate,
-                                   BigDecimal availableCapacityKg) {}
+                                   BigDecimal availableCapacityKg, Instant createdAt) {}
+
+    public record PublicRequestDto(UUID id, String pickupCity, String destinationCity, LocalDate availableFrom,
+            LocalDate deadline, com.habeshlist.entity.enums.MarketplaceTypes.ItemType itemType,
+            BigDecimal weightKg, BigDecimal offeredPrice, boolean hasProductPhoto, Instant createdAt) {}
 
     public record RecipientDto(UUID id, String name, String phone, String city, String address, String notes) {
         public static RecipientDto from(Recipient r) {
