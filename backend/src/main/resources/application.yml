@@ -26,6 +26,8 @@ spring:
 
 app:
   demo-data-enabled: ${DEMO_DATA_ENABLED:false}
+  demo-operational-data-enabled: ${DEMO_OPERATIONAL_DATA_ENABLED:false}
+  demo-marketplace-trips-enabled: ${DEMO_MARKETPLACE_TRIPS_ENABLED:false}
   initial-admin:
     email: ${INITIAL_ADMIN_EMAIL:}
     password: ${INITIAL_ADMIN_PASSWORD:}

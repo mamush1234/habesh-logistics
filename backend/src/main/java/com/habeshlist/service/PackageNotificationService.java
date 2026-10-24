@@ -41,6 +41,10 @@ public class PackageNotificationService {
                 .message(message).createdAt(clock.instant()).build());
     }
 
+    public void notifyAdmins(DeliveryRequest request, String message) {
+        users.findAllByRole(Role.ADMIN).forEach(user -> notifyRequest(request, user, message));
+    }
+
     @Transactional(readOnly = true)
     public List<PackageQueueDtos.NotificationDto> list() {
         return notifications.findTop100ByRecipientIdOrderByCreatedAtDesc(SecurityUtils.currentUser().userId())

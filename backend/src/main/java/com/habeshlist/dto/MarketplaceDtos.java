@@ -39,7 +39,8 @@ public final class MarketplaceDtos {
             BigDecimal weightKg, BigDecimal offeredPrice, DeliveryStatus status, EscrowStatus escrowStatus,
             BigDecimal escrowAmount, UUID acceptedOfferId, Integer rating, String disputeReason,
             List<OfferDto> offers, List<EventDto> timeline, ContactDto senderContact, ContactDto travelerContact,
-            Instant createdAt, String senderName) {}
+            Instant createdAt, String senderName, boolean guestRequest, boolean hasProductPhoto,
+            UUID convertedShipmentId, String shipmentTrackingNumber) {}
     public record MatchDto(RequestDto request, TripDto trip, BigDecimal price, double score) {}
     public record MessageInput(@NotBlank @Size(max = 2000) String body) {}
     public record MessageDto(UUID id, UUID authorId, String authorName, Role authorRole,

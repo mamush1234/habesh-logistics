@@ -34,6 +34,23 @@ class MarketplaceIntegrationTest {
     private final String destination = "Destination-" + UUID.randomUUID();
     private final String base = "/api/marketplace";
     @Test
+    void accountOnlyDemoDoesNotReseedOperationalRecordsForExistingUsers() {
+        org.springframework.test.util.ReflectionTestUtils.setField(seeder, "demoOperationalDataEnabled", false);
+        org.springframework.test.util.ReflectionTestUtils.setField(seeder, "demoMarketplaceTripsEnabled", true);
+        try {
+            long before = trips.count();
+            long requestsBefore = requests.count();
+            long usersBefore = users.count();
+            seeder.seed();
+            assertEquals(before, trips.count());
+            assertEquals(requestsBefore, requests.count());
+            assertEquals(usersBefore, users.count());
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(seeder, "demoOperationalDataEnabled", true);
+            org.springframework.test.util.ReflectionTestUtils.setField(seeder, "demoMarketplaceTripsEnabled", false);
+        }
+    }
+    @Test
     void demoTripsSeedForExistingAccountsWithoutDuplicatesAndSupportSenderMatches() throws Exception {
         org.springframework.test.util.ReflectionTestUtils.setField(seeder, "demoMarketplaceTripsEnabled", true);
         try {

@@ -27,7 +27,7 @@ public class ShipmentAccess {
         }
         return switch (user.role()) {
             case ADMIN -> true;
-            case SENDER -> shipment.getSender().getId().equals(user.userId());
+            case SENDER -> shipment.getSender() != null && shipment.getSender().getId().equals(user.userId());
             case TRAVELER -> shipment.isCarriedBy(user.userId());
             case AGENT -> (shipment.getReferringAgent() != null
                     && shipment.getReferringAgent().getId().equals(user.userId()))

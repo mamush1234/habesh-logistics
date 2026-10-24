@@ -13,7 +13,12 @@ import java.util.*;
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class DeliveryRequest {
     @Id @GeneratedValue private UUID id;
-    @ManyToOne(fetch = FetchType.LAZY, optional = false) private User sender;
+    @ManyToOne(fetch = FetchType.LAZY) private User sender;
+    @Column(length = 120) private String guestName;
+    @Column(length = 254) private String guestEmail;
+    @Column(length = 40) private String guestPhone;
+    @Column(columnDefinition = "text") private String productPhoto;
+    @OneToOne(mappedBy = "sourceRequest", fetch = FetchType.LAZY) private Shipment convertedShipment;
     @Column(nullable = false, length = 100) private String pickupCity;
     @Column(nullable = false, length = 100) private String destinationCity;
     @Column(nullable = false) private LocalDate availableFrom;

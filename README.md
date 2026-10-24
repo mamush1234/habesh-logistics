@@ -25,15 +25,118 @@ SMTP configuration have been removed. The historical V8 Flyway migration/table i
 retained to preserve existing database migration history; old invitation links no
 longer grant access. Existing accounts and passwords are unchanged.
 
-Only `GET /api/public/info` and `GET /api/public/travel` are public read APIs.
+Only `GET /api/public/info` and `GET /api/public/travel` are public GET APIs.
 The latter returns up to six upcoming traveler marketplace trips with remaining capacity:
 ID, route, departure date and available kilograms only. No names, notes, contact
 details, operational manifests or packages are public. All package, tracking,
 calendar, queue and admin data remain authenticated and role-restricted.
 
+# Private guest sender requests
+
+Admins open **Admin dashboard > Guest sender links** (`/admin/guest-links`),
+enter a private reference label, and create a link to share with one sender.
+The full link is displayed only at creation; copy it before leaving the page.
+Unused links can be revoked. Links expire seven days after creation and accept
+exactly one request. Guests do not register, receive a password, or gain account
+access. This is separate from the removed account-invitation feature.
+
+The guest form at `/guest-request#token=...` requires full name, email, phone,
+pickup/destination cities, availability/deadline, item type/description, weight,
+offered USD price, and a product photo. JPEG/PNG inputs are resized in the
+browser using the existing photo helper, then validated and re-encoded on the
+server (maximum 2 MB, 4096 pixels per side, 16 million pixels). This removes
+embedded image metadata. Guests should not include contacts in public package
+descriptions or photos. After submission, the page says:
+**"Your request has been received. We will contact you once we find a traveler."**
+Reloads and duplicate submissions return this receipt, not private contact data;
+concurrent retries cannot create duplicate requests.
+
+Guest requests enter the existing marketplace and notify active admins,
+travelers, and agents. Travelers/agents can inspect package details and the
+product photo, match their own trips, and submit offers as usual. Admins see
+the guest's contact details immediately and accept/decline offers on the guest's
+behalf. They can also simulate escrow funding and manage delivery status.
+Regular account-owned requests still require the owning sender to select an
+offer and fund demo escrow. Guest email, phone, and name stay admin-only,
+including after matching and simulated funding. Guest coordination is handled
+directly by the admin, not through account chat or guest account access.
+**Contacting the sender is a manual admin action; no email or SMS is sent.**
+
+API endpoints:
+- Admin-only `POST`/`GET /api/admin/guest-request-links` create/list links.
+- Admin-only `POST /api/admin/guest-request-links/{id}/revoke` revokes an unused link.
+- Anonymous `POST /api/guest-requests/check` accepts `{token}` and returns only
+  availability or a receipt.
+- Anonymous `POST /api/guest-requests/submit` accepts `{token, name, email, phone,
+  photoDataUrl, request}`; `request` uses the normal marketplace request input.
+- Authenticated `GET /api/marketplace/requests/{id}/product-photo` requires access
+  to that request. Large photo data is excluded from marketplace list DTOs.
+
+Only a SHA-256 hash of the random 256-bit link token is persisted. The frontend
+keeps the token in the URL fragment, not in the query string or server path.
+Treat the full link as a secret: anyone possessing an unused link can submit
+that sender's request. The guest API client is separate from account sessions.
+Flyway migration **V14** adds the link table and nullable sender/guest fields,
+preserving existing account requests and chat history.
+
+Create links on your deployed HTTPS website before sharing externally.
+`localhost`/`127.0.0.1` development links work only on the computer running the app.
+Test-profile demo data is in memory, so restarting that demo invalidates its links.
+
+## Converting a guest request into an operational shipment
+
+On a guest request, admins can select **Convert to shipment** before pickup
+(`REQUESTED`, `MATCHED`, or `PAID_ESCROW`). The admin supplies the missing
+destination country, recipient name/phone/city/address, and delivery method.
+Scheduled pickup requires an address and date. The new shipment reuses the
+request's destination city, description, weight, and product photo. Documents
+map to `DOCUMENT`, medicine to `MEDICINE`, and other item categories to `OTHER`.
+Normal configured shipment fees apply, not the marketplace offered price;
+operational payment starts `PENDING`. No guest user account is created.
+
+Conversion generates a normal tracking number and tracking events, then opens
+the standard operational path: payment, pickup/drop-off, receiving-agent and
+traveler assignment, luggage consolidation, trip assignment, and delivery.
+The **Manage shipment** link opens the admin shipment list with its row
+highlighted; **View tracking** opens the normal authenticated tracking screen.
+The admin shipment row links back to the source request and private contact details.
+Only admins may retrieve guest sender contacts. Operational manifests label the
+sender as **Guest sender**, rather than exposing guest identity/contact fields.
+
+The conversion transaction closes the source marketplace request as `CANCELLED`
+with a conversion timeline entry, declines pending offers, releases any reserved
+marketplace kilograms, and refunds any held **demo** escrow. A previously
+selected agent/traveler is carried over as the shipment's assigned agent/traveler;
+marketplace trips are not operational trips, so luggage and operational trip
+assignment remain separate admin actions. The source request displays
+**CONVERTED TO SHIPMENT** to admins and retains the shipment/tracking reference.
+The request remains an audit record and cannot receive new offers.
+
+`POST /api/admin/guest-requests/{id}/shipment` accepts `{recipient,
+destinationCountry, pickupMethod, pickupAddress?, pickupRequestedDate?,
+pickupTimeWindow?}`. It is admin-only and supports guest requests only.
+Request locking and a unique source-request foreign key prevent duplicate
+shipments, including concurrent retries. Failed conversions leave the original
+request, escrow, capacity, and offers unchanged. Repeating a successful conversion
+returns the existing shipment. Closed, disputed, or already-moving requests cannot
+be newly converted. Converted shipments must be cancelled rather than deleted,
+preserving the source link and tracking history.
+
+Flyway **V15** adds the unique shipment-to-request relationship and permits a
+shipment with a guest source instead of a registered sender; existing shipments
+and their normal access/processing rules are preserved.
+
 # Delivery marketplace (demo escrow)
 
-With demo data enabled in dev/test, startup seeds nine mock marketplace trips
+Local Docker development keeps demo user accounts but does not seed operational
+sample data. `DEMO_DATA_ENABLED=true` enables the demo accounts;
+`DEMO_OPERATIONAL_DATA_ENABLED=false` (default) prevents sample shipments,
+recipients, trips, luggage, commissions and marketplace trips from being added.
+Existing accounts, passwords and profiles are not reset. These flags do not
+delete existing records. Automated tests explicitly enable operational fixtures.
+
+With `DEMO_OPERATIONAL_DATA_ENABLED=true` and
+`DEMO_MARKETPLACE_TRIPS_ENABLED=true` in dev/test, startup seeds nine mock marketplace trips
 for `traveler@example.com` to Addis Ababa from `Washington, DC`, `Alexandria, VA`,
 `Arlington, VA`, `Baltimore, MD`, and `Silver Spring, MD`. Departures are 3-21 days
 after startup, arrivals one day later, with 4-20 kg capacities and varied item

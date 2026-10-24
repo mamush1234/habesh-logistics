@@ -66,7 +66,8 @@ public class MarketplaceService {
     private MarketTrip lockTrip(UUID id) {
         return trips.findForUpdate(id).orElseThrow(() -> new NotFoundException("Trip not found"));
     }
-    private boolean sender(DeliveryRequest r) { return r.getSender().getId().equals(actorId()); }
+    private boolean sender(DeliveryRequest r) { return r.getSender() != null && r.getSender().getId().equals(actorId()); }
+    private boolean managesSender(DeliveryRequest r) { return sender(r) || (r.getSender() == null && admin()); }
     private boolean carrier(DeliveryRequest r) {
         return r.getAcceptedOffer() != null && r.getAcceptedOffer().getTraveler().getId().equals(actorId());
     }
@@ -163,7 +164,7 @@ public class MarketplaceService {
         LocalDate arrival = t.getExpectedArrivalDate() == null ? t.getDepartureDate() : t.getExpectedArrivalDate();
         List<String> reasons = new ArrayList<>();
         if (r.getStatus() != DeliveryStatus.REQUESTED) reasons.add("This request is no longer accepting offers");
-        if (!r.getSender().isActive() || !t.getTraveler().isActive()) reasons.add("A participant account is inactive");
+        if ((r.getSender() != null && !r.getSender().isActive()) || !t.getTraveler().isActive()) reasons.add("A participant account is inactive");
         if (!samePickupRegion(t.getOrigin(), r.getPickupCity()))
             reasons.add("Trip origin '" + t.getOrigin() + "' must match pickup city '" + r.getPickupCity() + "' or share the DC/Maryland/Northern Virginia pickup region");
         if (!city(t.getDestination()).equals(city(r.getDestinationCity())))
@@ -259,14 +260,18 @@ public class MarketplaceService {
         offer.setStatus(OfferStatus.PENDING);
         offer.setCreatedAt(clock.instant());
         offers.saveAndFlush(offer);
-        notifications.notifyRequest(r, r.getSender(), "A traveler or agent sent an offer. Review it in the marketplace.");
+        if (r.getSender() == null) {
+            notifications.notifyAdmins(r, "A traveler or agent offered to carry a guest package. Review the offer and contact the guest sender.");
+        } else {
+            notifications.notifyRequest(r, r.getSender(), "A traveler or agent sent an offer. Review it in the marketplace.");
+        }
         return requestDto(r);
     }
 
     @Transactional
     public RequestDto acceptOffer(UUID requestId, UUID offerId) {
         DeliveryRequest r = lockRequest(requestId);
-        permit(sender(r));
+        permit(managesSender(r));
         require(r.getStatus() == DeliveryStatus.REQUESTED, "This request already has an accepted offer or is closed");
         DeliveryOffer offer = offers.findById(offerId).orElseThrow(() -> new NotFoundException("Offer not found"));
         require(offer.getRequest().getId().equals(requestId) && offer.getStatus() == OfferStatus.PENDING,
@@ -278,13 +283,16 @@ public class MarketplaceService {
             if (other.getStatus() == OfferStatus.PENDING) {
                 other.setStatus(other.getId().equals(offerId) ? OfferStatus.ACCEPTED : OfferStatus.DECLINED);
                 notifications.notifyRequest(r, other.getTraveler(), other.getId().equals(offerId)
-                        ? "Your offer was accepted. Package chat is open; waiting for demo escrow funding."
+                        ? r.getSender() == null
+                            ? "Your offer for a guest request was accepted. Contact an admin to coordinate pickup."
+                            : "Your offer was accepted. Package chat is open; waiting for demo escrow funding."
                         : "The sender selected another offer for this request.");
             }
         }
         r.setAcceptedOffer(offer);
         r.setStatus(DeliveryStatus.MATCHED);
-        record(r, "Sender accepted one offer; trip weight reserved");
+        record(r, r.getSender() == null ? "Admin accepted an offer for the guest sender; trip weight reserved"
+                : "Sender accepted one offer; trip weight reserved");
         return requestDto(r);
     }
 
@@ -292,7 +300,7 @@ public class MarketplaceService {
     public RequestDto decideOffer(UUID requestId, UUID offerId, boolean withdraw) {
         DeliveryRequest r = lockRequest(requestId);
         DeliveryOffer offer = offers.findById(offerId).orElseThrow(() -> new NotFoundException("Offer not found"));
-        permit(withdraw ? offer.getTraveler().getId().equals(actorId()) : sender(r));
+        permit(withdraw ? offer.getTraveler().getId().equals(actorId()) : managesSender(r));
         require(offer.getRequest().getId().equals(requestId) && offer.getStatus() == OfferStatus.PENDING
                 && r.getStatus() == DeliveryStatus.REQUESTED, "Only pending offers can be withdrawn or declined");
         offer.setStatus(withdraw ? OfferStatus.WITHDRAWN : OfferStatus.DECLINED);
@@ -302,7 +310,7 @@ public class MarketplaceService {
     @Transactional
     public RequestDto fundDemoEscrow(UUID id) {
         DeliveryRequest r = lockRequest(id);
-        permit(sender(r));
+        permit(managesSender(r));
         require(r.getStatus() == DeliveryStatus.MATCHED && r.getEscrowStatus() == EscrowStatus.NONE,
                 "Demo escrow can only be funded once after matching");
         r.setEscrowAmount(r.getAcceptedOffer().getPrice());
@@ -383,9 +391,10 @@ public class MarketplaceService {
                 .description(description).createdAt(clock.instant()).sequenceNumber(events.countByRequestId(r.getId())).build());
     }
     private void notifyParticipants(DeliveryRequest r, String message) {
-        Stream.concat(Stream.of(r.getSender()),
+        Stream.concat(Stream.ofNullable(r.getSender()),
                 r.getAcceptedOffer() == null ? Stream.empty() : Stream.of(r.getAcceptedOffer().getTraveler()))
                 .forEach(u -> notifications.notifyRequest(r, u, message));
+        if (r.getSender() == null) notifications.notifyAdmins(r, message + " Contact the guest sender to coordinate.");
         if (r.getStatus() == DeliveryStatus.DISPUTED)
             users.findAllByRole(Role.ADMIN).forEach(u -> notifications.notifyRequest(r, u, "A delivery dispute needs review."));
     }
@@ -404,15 +413,29 @@ public class MarketplaceService {
         boolean participant = sender(r) || carrier(r) || admin();
         boolean contactsUnlocked = admin() || (r.getEscrowStatus() != EscrowStatus.NONE
                 && r.getEscrowStatus() != EscrowStatus.DEMO_REFUNDED);
-        return new RequestDto(r.getId(), r.getSender().getId(), r.getPickupCity(), r.getDestinationCity(), r.getAvailableFrom(),
+        return new RequestDto(r.getId(), r.getSender() == null ? null : r.getSender().getId(), r.getPickupCity(), r.getDestinationCity(), r.getAvailableFrom(),
                 r.getDeadline(), r.getItemType(), r.getDescription(), r.getWeightKg(), r.getOfferedPrice(), r.getStatus(),
                 r.getEscrowStatus(), r.getEscrowAmount(), r.getAcceptedOffer() == null ? null : r.getAcceptedOffer().getId(),
                 r.getRating(), participant ? r.getDisputeReason() : null, offerDtos,
                 participant ? events.findByRequestIdOrderBySequenceNumberAsc(r.getId()).stream()
                         .map(e -> new EventDto(e.getStatus(), e.getDescription(), e.getCreatedAt())).toList() : List.of(),
-                sender(r) || (participant && contactsUnlocked) ? contact(r.getSender()) : null,
+                r.getSender() == null
+                        ? admin() ? new ContactDto(r.getGuestName(), r.getGuestEmail(), r.getGuestPhone()) : null
+                        : sender(r) || (participant && contactsUnlocked) ? contact(r.getSender()) : null,
                 participant && contactsUnlocked && r.getAcceptedOffer() != null ? contact(r.getAcceptedOffer().getTraveler()) : null,
-                r.getCreatedAt(), sender(r) || admin() || carrier(r)
-                        ? r.getSender().getFirstName() + " " + r.getSender().getLastName() : null);
+                r.getCreatedAt(), r.getSender() == null ? admin() ? r.getGuestName() : null
+                        : sender(r) || admin() || carrier(r)
+                            ? r.getSender().getFirstName() + " " + r.getSender().getLastName() : null,
+                r.getSender() == null, r.getProductPhoto() != null,
+                admin() && r.getConvertedShipment() != null ? r.getConvertedShipment().getId() : null,
+                admin() && r.getConvertedShipment() != null ? r.getConvertedShipment().getTrackingNumber() : null);
+    }
+
+    @Transactional(readOnly = true)
+    public String productPhoto(UUID id) {
+        DeliveryRequest r = request(id);
+        permit(visible(r));
+        if (r.getProductPhoto() == null) throw new NotFoundException("Product photo not found");
+        return r.getProductPhoto();
     }
 }

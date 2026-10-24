@@ -35,8 +35,11 @@ public class DataSeeder {
     private final TrackingEventService trackingEventService;
     private final MarketTripRepository marketTrips;
 
-    @Value("${app.demo-marketplace-trips-enabled:true}")
+    @Value("${app.demo-marketplace-trips-enabled:false}")
     private boolean demoMarketplaceTripsEnabled;
+
+    @Value("${app.demo-operational-data-enabled:false}")
+    private boolean demoOperationalDataEnabled;
 
     @Value("${app.pricing.default-rate-per-kg}")
     private BigDecimal defaultRate;
@@ -102,7 +105,7 @@ public class DataSeeder {
             throw new IllegalStateException("Demo data is allowed only in the dev or test profile");
         }
         if (users.count() > 0) {
-            seedMarketplaceTrips();
+            if (demoOperationalDataEnabled) seedMarketplaceTrips();
             return;
         }
 
@@ -110,7 +113,6 @@ public class DataSeeder {
                 "+1-555-0100", "Admin@123", Role.ADMIN);
         User traveler = authService.createPrivilegedUser("Ahmed", "Hassan", "traveler@example.com",
                 "+1-555-0101", "Traveler@123", Role.TRAVELER);
-        seedMarketplaceTrips();
         User sender1 = authService.createPrivilegedUser("Meron", "Tadesse", "sender@example.com",
                 "+1-555-0102", "Sender@123", Role.SENDER);
         User sender2 = authService.createPrivilegedUser("Yonas", "Bekele", "sender2@example.com",
@@ -124,6 +126,9 @@ public class DataSeeder {
         ap.setReferralCode("BETI2026");
         ap.setCountry("USA"); ap.setCity("Alexandria");
         agentProfiles.save(ap);
+
+        if (!demoOperationalDataEnabled) return;
+        seedMarketplaceTrips();
 
         // Create a trip and luggage manually to match spec example (TRIP-2026-0045 / LUG-2026-0001)
         Trip trip = Trip.builder()

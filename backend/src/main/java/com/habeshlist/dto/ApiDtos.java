@@ -46,11 +46,11 @@ public final class ApiDtos {
             UUID tripId, String tripNumber,
             Instant createdAt, Instant updatedAt, List<RecipientDto> recipients, int photoCount,
             UUID travelAnnouncementId, String travelRoute, LocalDate travelDepartureDate, String travelBookingStatus,
-            String queueStatus, Instant queueExpiresAt) {
+            String queueStatus, Instant queueExpiresAt, UUID sourceRequestId) {
         public static ShipmentDto from(Shipment s) {
             return new ShipmentDto(
                 s.getId(), s.getTrackingNumber(),
-                s.getSender().getId(), s.getSender().getFirstName() + " " + s.getSender().getLastName(),
+                s.getSender() == null ? null : s.getSender().getId(), s.senderDisplayName(),
                 RecipientDto.from(s.getRecipient()),
                 s.getDestinationCountry(), s.getDestinationCity(), s.getDescription(),
                 s.getDeclaredWeightKg(), s.getActualWeightKg(), s.getRatePerKg(),
@@ -76,7 +76,8 @@ public final class ApiDtos {
                 s.getTravelAnnouncement() == null ? null : s.getTravelAnnouncement().getOrigin() + " → " + s.getTravelAnnouncement().getDestination(),
                 s.getTravelAnnouncement() == null ? null : s.getTravelAnnouncement().getDepartureDate(),
                 s.getTravelBookingStatus() == null ? null : s.getTravelBookingStatus().name(),
-                s.getQueueStatus() == null ? null : s.getQueueStatus().name(), s.getQueueExpiresAt());
+                s.getQueueStatus() == null ? null : s.getQueueStatus().name(), s.getQueueExpiresAt(),
+                s.getSourceRequest() == null ? null : s.getSourceRequest().getId());
         }
     }
 
@@ -115,7 +116,7 @@ public final class ApiDtos {
             return new ShipmentSummaryDto(s.getId(), s.getTrackingNumber(),
                     s.getDeclaredWeightKg(), s.getDestinationCity(),
                     s.getStatus() == null ? null : s.getStatus().name(),
-                    s.getSender().getFirstName() + " " + s.getSender().getLastName(),
+                    s.senderDisplayName(),
                     s.getPhotoData() != null && !s.getPhotoData().isBlank(),
                     s.getRecipient().getName(), s.getRecipient().getPhone(), s.getDescription(),
                     s.allRecipients().stream().map(RecipientDto::from).toList(), s.allPhotos().size());

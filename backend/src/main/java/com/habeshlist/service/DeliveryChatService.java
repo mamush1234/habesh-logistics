@@ -34,16 +34,18 @@ public class DeliveryChatService {
 
     private boolean participant(DeliveryRequest request) {
         UUID id = SecurityUtils.currentUser().userId();
-        return request.getSender().getId().equals(id)
+        return (request.getSender() != null && request.getSender().getId().equals(id))
                 || (request.getAcceptedOffer() != null && request.getAcceptedOffer().getTraveler().getId().equals(id));
     }
     private void checkAccess(DeliveryRequest request) {
+        if (request.getSender() == null)
+            throw new AccessDeniedException("Guest requests are coordinated directly by an administrator; package chat is unavailable");
         if (request.getAcceptedOffer() == null
                 || (!participant(request) && SecurityUtils.currentUser().role() != Role.ADMIN))
             throw new AccessDeniedException("Chat is only available to the matched participants and admins");
     }
     private boolean writable(DeliveryRequest request) {
-        return participant(request) && SecurityUtils.currentUser().role() != Role.ADMIN
+        return request.getSender() != null && participant(request) && SecurityUtils.currentUser().role() != Role.ADMIN
                 && request.getStatus() != DeliveryStatus.COMPLETED && request.getStatus() != DeliveryStatus.CANCELLED;
     }
     private MessageDto dto(DeliveryMessage message) {

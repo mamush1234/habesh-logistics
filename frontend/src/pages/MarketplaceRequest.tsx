@@ -7,6 +7,7 @@ import { MarketplaceApi } from '../api/marketplace';
 import type { DeliveryStatus } from '../api/marketplace';
 import { DemoNotice, display, marketError, money, TravelerReputation, TripCard } from './Marketplace';
 import { PackageChat } from '../components/PackageChat';
+import { GuestShipmentConversion } from '../components/GuestShipmentConversion';
 
 export function MarketplaceRequest() {
   const { id = '' } = useParams();
@@ -22,11 +23,14 @@ export function MarketplaceRequest() {
   const r = query.data;
   const sender = r?.senderId === user?.id;
   const admin = user?.role === 'ADMIN';
+  const managesSender = sender || (admin && r?.guestRequest);
   const canOffer = user?.role === 'TRAVELER' || user?.role === 'AGENT';
   const accepted = r?.offers.find(o => o.id === r.acceptedOfferId);
   const carrier = accepted?.traveler.id === user?.id;
   const matches = useQuery({ queryKey: ['marketplace', 'request-matches', id, user?.id], queryFn: () => MarketplaceApi.requestMatches(id),
     enabled: !!r && (sender || admin || canOffer) && r.status === 'REQUESTED', refetchInterval: 15_000 });
+  const photo = useQuery({ queryKey: ['marketplace', 'product-photo', id, user?.id], queryFn: () => MarketplaceApi.productPhoto(id),
+    enabled: !!r?.hasProductPhoto, staleTime: 5 * 60_000 });
   const eligibleTrips = matches.data?.map(m => m.trip) ?? [];
   const selectedTrip = eligibleTrips.find(t => t.id === tripId);
   const mutation = useMutation({ mutationFn: (action: () => Promise<unknown>) => action(),
@@ -41,18 +45,26 @@ export function MarketplaceRequest() {
     <Link to="/marketplace" className="underline">Back to marketplace</Link>
     <h1 className="text-3xl font-bold">{r.pickupCity} &rarr; {r.destinationCity}</h1><DemoNotice />
     <section className="card space-y-3">
-      <h2 className="text-xl font-bold">Delivery request &middot; {display(r.status)}</h2>
+      <h2 className="text-xl font-bold">Delivery request &middot; {r.convertedShipmentId ? 'CONVERTED TO SHIPMENT' : display(r.status)}</h2>
       <p>{display(r.itemType)} &middot; {r.weightKg} kg &middot; Offered {money(r.offeredPrice)}</p>
       <p>Available {r.availableFrom} &middot; Deadline {r.deadline}</p>
       <p className="break-words">{r.description}</p>
+      {r.guestRequest && <p className="rounded-lg bg-blue-50 p-3 text-sm">Guest sender request. An administrator handles offers and contacts the sender directly. Guest contact details remain admin-only; package chat is not available for guest requests.</p>}
+      {r.hasProductPhoto && <div>
+        <h3 className="font-semibold">Product photo</h3>
+        {photo.isPending && <p role="status">Loading product photo...</p>}
+        {photo.isError && <p role="alert">Could not load product photo. <button className="underline" onClick={() => photo.refetch()}>Retry</button></p>}
+        {photo.data && <img src={photo.data} alt="Product for this delivery request" className="max-h-80 max-w-full rounded-lg object-contain" />}
+      </div>}
       <p>Demo escrow: {display(r.escrowStatus)}{r.escrowAmount != null && <> &middot; {money(r.escrowAmount)}</>}</p>
       {r.disputeReason && <p className="text-red-700 break-words">Dispute: {r.disputeReason}</p>}
       {r.senderContact && <p className="text-sm break-words">Sender: {r.senderContact.name} &middot; {r.senderContact.email} {r.senderContact.phone}</p>}
       {!r.senderContact && r.senderName && <p className="text-sm break-words">Sender: {r.senderName}</p>}
       {r.travelerContact && <p className="text-sm break-words">Traveler / agent: {r.travelerContact.name} &middot; {r.travelerContact.email} {r.travelerContact.phone}</p>}
-      {!r.travelerContact && <p className="text-sm text-ink-500">Participant names unlock when an offer is accepted. Email and phone details unlock for the selected participants after demo escrow funding.</p>}
+      {!r.guestRequest && !r.travelerContact && <p className="text-sm text-ink-500">Participant names unlock when an offer is accepted. Email and phone details unlock for the selected participants after demo escrow funding.</p>}
     </section>
-    {r.acceptedOfferId && (sender || carrier || admin) && <PackageChat key={`${id}:${user?.id}`} requestId={id} closed={r.status === 'CANCELLED' || r.status === 'COMPLETED'} />}
+    {admin && r.guestRequest && <GuestShipmentConversion key={r.id} request={r} />}
+    {!r.guestRequest && r.acceptedOfferId && (sender || carrier || admin) && <PackageChat key={`${id}:${user?.id}`} requestId={id} closed={r.status === 'CANCELLED' || r.status === 'COMPLETED'} />}
     {r.status === 'REQUESTED' && canOffer && !pending && <form className="card space-y-4" onSubmit={e => { e.preventDefault(); if (selectedTrip) act(() => MarketplaceApi.offer(id, selectedTrip.id, Number(price), message)); }}>
       <h2 className="text-xl font-bold">Send an offer</h2>
       {matches.isPending && <p role="status">Checking your trips for a match...</p>}
@@ -64,7 +76,7 @@ export function MarketplaceRequest() {
       <label className="label">Message (no contact details)<textarea className="input" maxLength={500} value={message} onChange={e => setMessage(e.target.value)} /></label>
       <div className="flex flex-wrap gap-2"><button className="btn btn-primary" disabled={!selectedTrip || matches.isError || mutation.isPending}>Send offer</button>
         <button type="button" className="btn btn-brand" disabled={!selectedTrip || matches.isError || mutation.isPending} onClick={() => selectedTrip && act(() => MarketplaceApi.offer(id, selectedTrip.id, r.offeredPrice, message))}>Accept asking price {money(r.offeredPrice)}</button></div>
-      <p className="text-sm">Accepting the asking price sends an offer. The sender must still select you. Weight is reserved only after sender acceptance.</p>
+      <p className="text-sm">Accepting the asking price sends an offer. {r.guestRequest ? 'An admin must select you for the guest sender.' : 'The sender must still select you.'} Weight is reserved only after offer acceptance.</p>
     </form>}
     <section className="card space-y-4">
       <h2 className="text-xl font-bold">{sender || admin ? 'Traveler / agent offers (ranked)' : 'Your offers'}</h2>
@@ -73,7 +85,7 @@ export function MarketplaceRequest() {
         <TravelerReputation traveler={o.traveler} /><p className="font-semibold">{money(o.price)} &middot; {display(o.status)} &middot; Score {o.score.toFixed(2)}</p>
         {o.message && <p className="text-sm break-words">{o.message}</p>}
         <div className="flex flex-wrap gap-2">
-          {sender && r.status === 'REQUESTED' && o.status === 'PENDING' && <>
+          {managesSender && r.status === 'REQUESTED' && o.status === 'PENDING' && <>
             <button className="btn btn-brand" disabled={mutation.isPending} onClick={() => act(() => MarketplaceApi.decideOffer(id, o.id, 'accept'))}>Accept this offer</button>
             <button className="btn btn-ghost" disabled={mutation.isPending} onClick={() => act(() => MarketplaceApi.decideOffer(id, o.id, 'decline'))}>Decline</button></>}
           {o.traveler.id === user?.id && o.status === 'PENDING' && <button className="btn btn-ghost" disabled={mutation.isPending} onClick={() => act(() => MarketplaceApi.decideOffer(id, o.id, 'withdraw'))}>Withdraw offer</button>}
@@ -81,9 +93,9 @@ export function MarketplaceRequest() {
       </article>)}
       <p className="text-xs text-ink-500">Ranking: price 50%, completed-delivery ratings 30%, admin-assigned verification 20%. Lower prices favor senders; higher offered prices favor travelers. No rating history contributes zero rating points.</p>
     </section>
-    {(sender || carrier || admin) && <section className="card space-y-4">
+    {(sender || carrier || admin) && !r.convertedShipmentId && <section className="card space-y-4">
       <h2 className="text-xl font-bold">Delivery actions</h2>
-      {sender && r.status === 'MATCHED' && <button className="btn btn-brand" disabled={mutation.isPending} onClick={() => act(() => MarketplaceApi.fund(id))}>Simulate escrow funding {money(accepted?.price ?? r.offeredPrice)} - no real payment</button>}
+      {managesSender && r.status === 'MATCHED' && <button className="btn btn-brand" disabled={mutation.isPending} onClick={() => act(() => MarketplaceApi.fund(id))}>Simulate escrow funding {money(accepted?.price ?? r.offeredPrice)} - no real payment</button>}
       <div className="flex flex-wrap gap-2">
         {(carrier || admin) && r.status === 'PAID_ESCROW' && <button className="btn btn-primary" disabled={mutation.isPending} onClick={() => transition('PICKED_UP')}>Mark picked up</button>}
         {(carrier || admin) && r.status === 'PICKED_UP' && <button className="btn btn-primary" disabled={mutation.isPending} onClick={() => transition('IN_TRANSIT')}>Mark in transit</button>}

@@ -90,6 +90,32 @@ public class ShipmentService {
     private static boolean isBlank(String s) { return s == null || s.isBlank(); }
 
     private Shipment createFor(User sender, RequestDtos.CreateShipmentRequest req) {
+        return createFor(sender, req, sender, null);
+    }
+
+    @Transactional
+    public Shipment createFromGuest(DeliveryRequest source, com.habeshlist.dto.GuestRequestDtos.ConvertInput input) {
+        if (com.habeshlist.security.SecurityUtils.currentUser().role() != Role.ADMIN)
+            throw new AccessDeniedException("Only admins can convert guest requests");
+        if (source.getSender() != null) throw new BadRequestException("Only guest requests can use this conversion");
+        User actor = users.findById(com.habeshlist.security.SecurityUtils.currentUser().userId())
+                .orElseThrow(() -> new NotFoundException("Administrator not found"));
+        if (input.pickupMethod() == PickupMethod.PICKUP
+                && (isBlank(input.pickupAddress()) || input.pickupRequestedDate() == null))
+            throw new BadRequestException("Pickup requires an address and requested date");
+        PackageType type = switch (source.getItemType()) {
+            case DOCUMENTS -> PackageType.DOCUMENT;
+            case MEDICINE -> PackageType.MEDICINE;
+            default -> PackageType.OTHER;
+        };
+        var req = new RequestDtos.CreateShipmentRequest(input.recipient(), input.destinationCountry().strip(),
+                source.getDestinationCity(), source.getDescription(), source.getWeightKg(), null,
+                input.pickupMethod(), input.pickupAddress(), input.pickupRequestedDate(), input.pickupTimeWindow(),
+                null, null, type, source.getProductPhoto(), null, null, null);
+        return createFor(null, req, actor, source);
+    }
+
+    private Shipment createFor(User sender, RequestDtos.CreateShipmentRequest req, User actor, DeliveryRequest source) {
         if (req.photoDataUrl() != null && !req.photoDataUrl().isBlank() && req.photoDataUrls() != null) {
             throw new BadRequestException("Provide photoDataUrls or photoDataUrl, not both");
         }
@@ -122,6 +148,7 @@ public class ShipmentService {
                 .trackingNumber(nextTrackingNumber())
                 .trackingToken(CodeGenerator.randomToken(24))
                 .sender(sender)
+                .sourceRequest(source)
                 .recipient(r)
                 .destinationCountry(req.destinationCountry())
                 .destinationCity(req.destinationCity())
@@ -145,7 +172,7 @@ public class ShipmentService {
         shipments.save(s);
 
         trackingEventService.record(s, ShipmentStatus.CREATED, "SHIPMENT_CREATED",
-                "Shipment created", "USA", sender);
+                source == null ? "Shipment created" : "Shipment created from guest delivery request " + source.getId(), "USA", actor);
 
         if (req.pickupMethod() == PickupMethod.PICKUP) {
             Pickup p = Pickup.builder()
@@ -158,11 +185,11 @@ public class ShipmentService {
             pickups.save(p);
             s.setStatus(ShipmentStatus.PICKUP_SCHEDULED);
             trackingEventService.record(s, ShipmentStatus.PICKUP_SCHEDULED, "PICKUP_REQUESTED",
-                    "Pickup requested at " + p.getAddress(), "USA", sender);
+                    "Pickup requested at " + p.getAddress(), "USA", actor);
         } else {
             s.setStatus(ShipmentStatus.READY_FOR_PICKUP);
             trackingEventService.record(s, ShipmentStatus.READY_FOR_PICKUP, "DROPOFF_SCHEDULED",
-                    "Awaiting drop-off at Alexandria", "Alexandria, VA", sender);
+                    "Awaiting drop-off at Alexandria", "Alexandria, VA", actor);
         }
 
         // Create commission record if referred
@@ -199,7 +226,7 @@ public class ShipmentService {
     private Shipment editablePhotos(UUID shipmentId, AuthPrincipal principal) {
         Shipment s = shipments.findForUpdate(shipmentId).orElseThrow(() -> new NotFoundException("Shipment not found"));
         if (principal.role() != Role.ADMIN && !(principal.role() == Role.SENDER
-                && s.getSender().getId().equals(principal.userId()))) {
+                && s.getSender() != null && s.getSender().getId().equals(principal.userId()))) {
             throw new AccessDeniedException("Only an admin or the package's sender can update its picture");
         }
         return s;
@@ -243,6 +270,9 @@ public class ShipmentService {
     @Transactional
     public void remove(UUID shipmentId) {
         Shipment s = getById(shipmentId);
+        if (s.getSourceRequest() != null) {
+            throw new BadRequestException("Converted guest shipments must be cancelled, not deleted, to preserve the request and tracking history");
+        }
         if (s.getLuggage() != null || s.getTrip() != null) {
             throw new BadRequestException("Shipment is already assigned to luggage or a trip; unassign it first");
         }

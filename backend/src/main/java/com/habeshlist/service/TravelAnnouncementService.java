@@ -176,7 +176,7 @@ public class TravelAnnouncementService {
         var announcement = shipment.getTravelAnnouncement();
         boolean reveal = com.habeshlist.security.ShipmentAccess.canRead(SecurityUtils.currentUser(), shipment);
         return new ApiDtos.TravelBookingRequestDto(shipment.getId(), shipment.getTrackingNumber(),
-                reveal ? shipment.getSender().getFirstName() + " " + shipment.getSender().getLastName() : "Hidden until service fee proof is uploaded",
+                reveal ? shipment.senderDisplayName() : "Hidden until service fee proof is uploaded",
                 shipment.getDeclaredWeightKg(), announcement.getId(),
                 announcement.getOrigin() + " → " + announcement.getDestination(),
                 announcement.getDepartureDate(), shipment.getTravelBookingStatus().name());

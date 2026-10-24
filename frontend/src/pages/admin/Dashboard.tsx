@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AdminApi, ShipmentApi, TripApi } from '../../api/endpoints';
@@ -16,11 +16,17 @@ const EMPTY_TRIP = {
 
 export function AdminDashboard() {
   const qc = useQueryClient();
+  const { hash } = useLocation();
   const stats = useQuery({ queryKey: ['admin-stats'], queryFn: AdminApi.dashboard });
   const trips = useQuery({ queryKey: ['trips'], queryFn: TripApi.list });
   const travelers = useQuery({ queryKey: ['admin-users', 'TRAVELER'], queryFn: () => AdminApi.users('TRAVELER') });
   const agents = useQuery({ queryKey: ['admin-users', 'AGENT'], queryFn: () => AdminApi.users('AGENT') });
   const shipments = useQuery({ queryKey: ['shipments'], queryFn: ShipmentApi.list });
+  useEffect(() => {
+    if (hash.startsWith('#shipment-') && shipments.data) {
+      document.getElementById(hash.slice(1))?.scrollIntoView({ block: 'center' });
+    }
+  }, [hash, shipments.data]);
   const agentCodes = useQuery({ queryKey: ['agent-codes'], queryFn: AdminApi.agentCodes });
   const agentMut = useMutation({
     mutationFn: ({ id, agentId }: { id: string; agentId: string | null }) => ShipmentApi.assignAgent(id, agentId),
@@ -99,9 +105,10 @@ export function AdminDashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-3xl font-bold">Admin dashboard</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Link className="btn btn-ghost" to="/admin/guest-links">Guest sender links</Link>
           <Link className="btn btn-ghost" to="/admin/access">Account access</Link>
           <Link className="btn btn-ghost" to="/admin/luggage">Luggage consolidation</Link>
           <button className="btn btn-ghost" onClick={() => setShowUser(!showUser)} data-testid="admin-create-user">+ New user</button>
@@ -220,9 +227,11 @@ export function AdminDashboard() {
           </thead>
           <tbody className="divide-y divide-ink-300/50">
             {shipments.data?.map(s => (
-              <tr key={s.id}>
+              <tr key={s.id} id={`shipment-${s.id}`} className="scroll-mt-24 target:bg-amber-50">
                 <td className="py-2 font-mono">{s.trackingNumber}</td>
-                <td>{s.senderName}</td>
+                <td>{s.senderName}
+                  {s.sourceRequestId && <Link className="block text-xs text-brand-600 underline" to={`/marketplace/requests/${s.sourceRequestId}`}>Guest request / contact details</Link>}
+                </td>
                 <td><RecipientDetails name={s.recipient.name} phone={s.recipient.phone} recipients={s.recipients} description={s.description} /></td>
                 <td>{s.packageType}</td>
                 <td>
@@ -261,10 +270,10 @@ export function AdminDashboard() {
                   </select>
                 </td>
                 <td>
-                  <button className="btn btn-ghost text-xs text-red-600" data-testid={`shipment-remove-${s.trackingNumber}`}
+                  {!s.sourceRequestId && <button className="btn btn-ghost text-xs text-red-600" data-testid={`shipment-remove-${s.trackingNumber}`}
                     onClick={() => { if (confirm(`Remove ${s.trackingNumber}? This cannot be undone.`)) removeMut.mutate(s.id); }}>
                     Remove
-                  </button>
+                  </button>}
                 </td>
               </tr>
             ))}

@@ -7,7 +7,7 @@ import { useAuth } from '../auth/AuthContext';
 import { preparePackagePhoto } from '../util/packagePhoto';
 
 export function PackagePhoto({ id, trackingNumber, hasPhoto, senderId }: {
-  id: string; trackingNumber: string; hasPhoto: boolean; senderId?: string;
+  id: string; trackingNumber: string; hasPhoto: boolean; senderId?: string | null;
 }) {
   const { user } = useAuth();
   const qc = useQueryClient();

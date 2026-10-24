@@ -36,9 +36,17 @@ public class Shipment {
     @Column(nullable = false, unique = true, length = 64)
     private String trackingToken;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "sender_id")
     private User sender;
+
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_request_id", unique = true)
+    private DeliveryRequest sourceRequest;
+
+    public String senderDisplayName() {
+        return sender == null ? "Guest sender" : sender.getFirstName() + " " + sender.getLastName();
+    }
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "recipient_id")

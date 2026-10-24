@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { useAuth } from '../auth/AuthContext';
 import { MarketplaceApi, deliveryStatuses, itemTypes } from '../api/marketplace';
 import type { ItemType, MarketRequest, MarketTraveler, MarketTrip, VerificationLevel } from '../api/marketplace';
+import { initialRequestForm, MarketRequestFields, today } from '../components/MarketRequestFields';
 
 export const display = (value: string) => value.replaceAll('_', ' ');
 export const money = (value: number) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value);
@@ -41,19 +42,13 @@ export function TripCard({ trip }: { trip: MarketTrip }) {
     <p className="text-sm">Will not carry: {trip.blockedItems.map(display).join(', ') || 'None specified'}</p>
   </article>;
 }
-function today() {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
 export function MarketRequestForm() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [params] = useSearchParams();
   const preferredTrip = params.get('travel');
   const trips = useQuery({ queryKey: ['marketplace', 'trips'], queryFn: MarketplaceApi.trips, enabled: !!preferredTrip });
-  const [form, setForm] = useState({ pickupCity: '', destinationCity: '', availableFrom: today(), deadline: '', itemType: 'OTHER' as ItemType,
-    description: '', weightKg: '', offeredPrice: '' });
+  const [form, setForm] = useState(initialRequestForm);
   const selectedTrip = trips.data?.find(t => t.id === preferredTrip);
   const appliedTrip = useRef('');
   useEffect(() => {
@@ -74,17 +69,7 @@ export function MarketRequestForm() {
     {trips.isError && <p role="alert">Could not load the selected trip. <button className="underline" onClick={() => trips.refetch()}>Retry</button></p>}
     <p className="text-sm">Travelers and agents send offers, then you choose one. Posting does not reserve a trip. Do not include contact details in the public description.</p>
     <form className="card grid sm:grid-cols-2 gap-4" onSubmit={e => { e.preventDefault(); mutation.mutate(); }}>
-      <label className="label">Pickup city<input className="input" required maxLength={100} value={form.pickupCity} onChange={e => setForm({ ...form, pickupCity: e.target.value })} /></label>
-      <label className="label">Destination city<input className="input" required maxLength={100} value={form.destinationCity} onChange={e => setForm({ ...form, destinationCity: e.target.value })} /></label>
-      <label className="label">Available from<input className="input" type="date" required min={today()} value={form.availableFrom} onChange={e => setForm({ ...form, availableFrom: e.target.value })} /></label>
-      <label className="label">Delivery deadline<input className="input" type="date" required min={form.availableFrom} value={form.deadline} onChange={e => setForm({ ...form, deadline: e.target.value })} /></label>
-      <label className="label">Item type<select className="input" value={form.itemType} onChange={e => {
-        const itemType = itemTypes.find(type => type === e.target.value);
-        if (itemType) setForm({ ...form, itemType });
-      }}>{itemTypes.map(type => <option key={type} value={type}>{display(type)}</option>)}</select></label>
-      <label className="label">Weight (kg)<input className="input" type="number" min="0.1" max="99999999.99" step="0.01" required value={form.weightKg} onChange={e => setForm({ ...form, weightKg: e.target.value })} /></label>
-      <label className="label">Offered price (USD)<input className="input" type="number" min="0.01" max="99999999.99" step="0.01" required value={form.offeredPrice} onChange={e => setForm({ ...form, offeredPrice: e.target.value })} /></label>
-      <label className="label sm:col-span-2">Item description<textarea className="input" required maxLength={1000} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label>
+      <MarketRequestFields form={form} onChange={setForm} />
       <button className="btn btn-brand sm:col-span-2" disabled={mutation.isPending}>{mutation.isPending ? 'Posting...' : 'Post request'}</button>
     </form>
   </div>;

@@ -18,6 +18,8 @@ import { useAuth } from './auth/AuthContext';
 import { PackageQueue } from './pages/PackageQueue';
 import { Marketplace, MarketRequestForm } from './pages/Marketplace';
 import { MarketplaceRequest } from './pages/MarketplaceRequest';
+import { GuestRequest } from './pages/GuestRequest';
+import { AdminGuestLinks } from './pages/admin/GuestLinks';
 
 export default function App() {
   const { user } = useAuth();
@@ -27,6 +29,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/guest-request" element={<GuestRequest />} />
         <Route path="/track" element={<ProtectedRoute><Track /></ProtectedRoute>} />
         <Route path="/track/:trackingNumber" element={<ProtectedRoute><Track /></ProtectedRoute>} />
         <Route path="/send" element={<ProtectedRoute roles={['SENDER']}><MarketRequestForm /></ProtectedRoute>} />
@@ -49,6 +52,7 @@ export default function App() {
         <Route path="/legacy-packages" element={<ProtectedRoute roles={['ADMIN']}><PackageQueue /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute roles={['ADMIN']}><AdminDashboard /></ProtectedRoute>} />
         <Route path="/admin/access" element={<ProtectedRoute roles={['ADMIN']}><AdminAccess /></ProtectedRoute>} />
+        <Route path="/admin/guest-links" element={<ProtectedRoute roles={['ADMIN']}><AdminGuestLinks /></ProtectedRoute>} />
         <Route path="/admin/luggage" element={<ProtectedRoute roles={['ADMIN']}><AdminLuggage /></ProtectedRoute>} />
         <Route path="/admin/trips/:id" element={<ProtectedRoute roles={['ADMIN']}><AdminTrip /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" />} />

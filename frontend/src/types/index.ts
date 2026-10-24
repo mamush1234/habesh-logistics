@@ -46,8 +46,9 @@ export interface Recipient {
 export interface Shipment {
   id: string;
   trackingNumber: string;
-  senderId: string;
+  senderId: string | null;
   senderName: string;
+  sourceRequestId: string | null;
   recipient: Recipient;
   recipients: Recipient[];
   photoCount: number;

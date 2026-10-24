@@ -44,7 +44,8 @@ public class SecurityConfig {
                             org.springframework.http.HttpStatus.UNAUTHORIZED)))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(org.springframework.http.HttpMethod.POST,
-                        "/api/auth/login", "/api/auth/register").permitAll()
+                        "/api/auth/login", "/api/auth/register",
+                        "/api/guest-requests/check", "/api/guest-requests/submit").permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.GET,
                         "/api/public/info", "/api/public/travel").permitAll()
                 .requestMatchers("/error").permitAll()

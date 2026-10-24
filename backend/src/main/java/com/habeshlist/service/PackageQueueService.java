@@ -41,6 +41,13 @@ public class PackageQueueService {
         Shipment shipment = find(id);
         ShipmentAccess.assertCanRead(SecurityUtils.currentUser(), shipment);
         var sender = shipment.getSender();
+        if (sender == null) {
+            if (SecurityUtils.currentUser().role() != Role.ADMIN)
+                throw new AccessDeniedException("Guest sender contact details are admin-only");
+            var source = shipment.getSourceRequest();
+            return new PackageQueueDtos.SenderContactDto(source.getGuestName(), source.getGuestEmail(),
+                    source.getGuestPhone(), shipment.getPickupAddress());
+        }
         return new PackageQueueDtos.SenderContactDto(sender.getFirstName() + " " + sender.getLastName(),
                 sender.getEmail(), sender.getPhone(), shipment.getPickupAddress());
     }

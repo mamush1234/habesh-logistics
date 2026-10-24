@@ -25,7 +25,9 @@ export interface MarketOffer {
 }
 export interface MarketContact { name: string; email: string; phone: string | null }
 export interface MarketRequest extends MarketRequestInput {
-  id: string; senderId: string; senderName: string | null; status: DeliveryStatus;
+  id: string; senderId: string | null; senderName: string | null; status: DeliveryStatus;
+  guestRequest: boolean; hasProductPhoto: boolean;
+  convertedShipmentId: string | null; shipmentTrackingNumber: string | null;
   escrowStatus: 'NONE' | 'DEMO_HELD' | 'DEMO_RELEASED' | 'DEMO_REFUNDED';
   escrowAmount: number | null; acceptedOfferId: string | null; rating: number | null;
   disputeReason: string | null; offers: MarketOffer[]; createdAt: string;
@@ -48,6 +50,7 @@ export const MarketplaceApi = {
   createTrip: (input: MarketTripInput) => api.post<MarketTrip>('/api/marketplace/trips', input).then(r => r.data),
   requests: () => api.get<MarketRequest[]>('/api/marketplace/requests').then(r => r.data),
   request: (id: string) => api.get<MarketRequest>(`/api/marketplace/requests/${id}`).then(r => r.data),
+  productPhoto: (id: string) => api.get<{ photoDataUrl: string }>(`/api/marketplace/requests/${id}/product-photo`).then(r => r.data.photoDataUrl),
   createRequest: (input: MarketRequestInput) => api.post<MarketRequest>('/api/marketplace/requests', input).then(r => r.data),
   requestMatches: (id: string) => api.get<MarketMatch[]>(`/api/marketplace/requests/${id}/matches`).then(r => r.data),
   tripMatches: (id: string) => api.get<MarketMatch[]>(`/api/marketplace/trips/${id}/matches`).then(r => r.data),

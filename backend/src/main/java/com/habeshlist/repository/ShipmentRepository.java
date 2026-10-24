@@ -35,7 +35,7 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
             + "where s.travelAnnouncement.id = :announcementId and s.travelBookingStatus = :status")
     java.math.BigDecimal travelWeight(UUID announcementId, TravelBookingStatus status);
 
-    @Query("select s from Shipment s join fetch s.travelAnnouncement a join fetch s.sender "
+    @Query("select s from Shipment s join fetch s.travelAnnouncement a left join fetch s.sender "
             + "where (:authorId is null or a.postedBy.id = :authorId) order by s.createdAt desc")
     List<Shipment> findTravelRequests(UUID authorId);
 
