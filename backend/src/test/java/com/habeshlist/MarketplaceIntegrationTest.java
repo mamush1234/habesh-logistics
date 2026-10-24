@@ -29,6 +29,8 @@ class MarketplaceIntegrationTest {
     @Autowired MarketTripRepository trips;
     @Autowired UserRepository users;
     @Autowired DeliveryMessageRepository chatMessages;
+    @Autowired DeliveryOfferRepository deliveryOffers;
+    @Autowired PackageNotificationRepository packageNotifications;
     @Autowired com.habeshlist.service.DataSeeder seeder;
     private final String origin = "Origin-" + UUID.randomUUID();
     private final String destination = "Destination-" + UUID.randomUUID();
@@ -92,12 +94,13 @@ class MarketplaceIntegrationTest {
         return ok("POST", "/api/auth/login", null, Map.of("email", email, "password", password)).get("token").asText();
     }
     private String sender() throws Exception { return login("sender@example.com", "Sender@123"); }
-    private String traveler() throws Exception { return login("traveler@example.com", "Traveler@123"); }
+    private String agentCarrier() throws Exception { return login("agent@example.com", "Agent@123"); }
     private String admin() throws Exception { return login("admin@habeshlist.com", "Admin@123"); }
-    private String newTraveler() throws Exception {
-        return ok("POST", "/api/auth/register", null, Map.of("email", UUID.randomUUID() + "@example.com",
-                "password", "New-traveler-password-2026", "firstName", "Second", "lastName", "Traveler", "role", "TRAVELER"))
-                .get("token").asText();
+    private String newAgentCarrier() throws Exception {
+        String email = UUID.randomUUID() + "@example.com";
+        ok("POST", "/api/admin/users", admin(), Map.of("email", email,
+                "password", "New-agent-password-2026", "firstName", "Second", "lastName", "Agent", "role", "AGENT"));
+        return login(email, "New-agent-password-2026");
     }
     private Map<String, Object> tripInput() {
         return new HashMap<>(Map.of("origin", origin, "destination", destination, "departureDate", date(3),
@@ -128,12 +131,111 @@ class MarketplaceIntegrationTest {
     }
 
     @Test
+    void onlyAdminsApproveAndTravelersCannotBypassVisibilityThroughOtherReadPaths() throws Exception {
+        String s = sender(), a = admin(), agent = agentCarrier(), t = login("traveler@example.com", "Traveler@123");
+        JsonNode r = request(s), travelerTrip = trip(t);
+        String path = path(r), id = r.path("id").asText(), approval = path + "/approval";
+        var stored = requests.findById(UUID.fromString(id)).orElseThrow();
+        stored.setProductPhoto("data:image/jpeg;base64,dGVzdA==");
+        assertFalse(r.path("adminApproved").asBoolean());
+        assertTrue(ok("GET", base + "/requests", a, null).findValues("id").contains(r.path("id")));
+        assertTrue(ok("GET", base + "/requests", s, null).findValues("id").contains(r.path("id")));
+        assertTrue(ok("GET", base + "/requests", agent, null).findValues("id").contains(r.path("id")));
+        assertFalse(ok("GET", base + "/requests", t, null).findValues("id").contains(r.path("id")));
+        for (String readPath : List.of(path, path + "/product-photo", path + "/matches", path + "/messages"))
+            call("GET", readPath, t, null).andExpect(status().isForbidden());
+        assertFalse(ok("GET", base + "/trips/" + travelerTrip.path("id").asText() + "/matches", t, null)
+                .toString().contains(id));
+        assertFalse(ok("GET", "/api/public/requests", null, null).toString().contains(id));
+        call("GET", "/api/public/requests/" + id + "/product-photo", null, null).andExpect(status().isNotFound());
+        assertFalse(ok("GET", "/api/package-queue/notifications", t, null).toString().contains(id));
+        call("PUT", approval, null, Map.of("approved", true)).andExpect(status().isUnauthorized());
+        for (String token : List.of(s, agent, t))
+            call("PUT", approval, token, Map.of("approved", true)).andExpect(status().isForbidden());
+        call("PUT", approval, a, Map.of()).andExpect(status().isBadRequest());
+        JsonNode approved = ok("PUT", approval, a, Map.of("approved", true));
+        assertTrue(approved.path("adminApproved").asBoolean());
+        int eventCount = approved.path("timeline").size();
+        assertEquals(eventCount, ok("PUT", approval, a, Map.of("approved", true)).path("timeline").size());
+        assertEquals(id, ok("GET", path, t, null).path("id").asText());
+        call("GET", path + "/product-photo", t, null).andExpect(status().isOk());
+        assertTrue(ok("GET", base + "/trips/" + travelerTrip.path("id").asText() + "/matches", t, null)
+                .toString().contains(id));
+        call("GET", path + "/matches", t, null).andExpect(status().isOk());
+        assertTrue(ok("GET", "/api/public/requests", null, null).toString().contains(id));
+        call("GET", "/api/public/requests/" + id + "/product-photo", null, null).andExpect(status().isOk());
+        JsonNode notifications = ok("GET", "/api/package-queue/notifications", t, null);
+        JsonNode notice = notifications.findParents("requestId").stream()
+                .filter(n -> n.path("requestId").asText().equals(id)).findFirst().orElseThrow();
+        assertTrue(notice.path("message").asText().contains("read-only"));
+        ok("PUT", approval, a, Map.of("approved", false));
+        assertFalse(ok("GET", base + "/requests", t, null).toString().contains(id));
+        call("GET", path, t, null).andExpect(status().isForbidden());
+        call("GET", path + "/product-photo", t, null).andExpect(status().isForbidden());
+        assertFalse(ok("GET", "/api/public/requests", null, null).toString().contains(id));
+        call("GET", "/api/public/requests/" + id + "/product-photo", null, null).andExpect(status().isNotFound());
+        assertFalse(ok("GET", "/api/package-queue/notifications", t, null).toString().contains(id));
+        call("PUT", "/api/package-queue/notifications/" + notice.path("id").asText() + "/read", t, null)
+                .andExpect(status().isForbidden());
+        call("GET", path, agent, null).andExpect(status().isOk());
+        JsonNode agentTrip = trip(agent);
+        assertTrue(offer(agent, r, agentTrip, 40).hasNonNull("id"));
+    }
+
+    @Test
+    void travelersCannotMutateEvenPreviouslyMatchedApprovedRequestsAndAgentsStillCan() throws Exception {
+        String s = sender(), a = admin(), t = login("traveler@example.com", "Traveler@123"), agent = agentCarrier();
+        JsonNode r = request(s), travelerTrip = trip(t);
+        String path = path(r);
+        var stored = requests.findById(UUID.fromString(r.path("id").asText())).orElseThrow();
+        var traveler = users.findByEmailIgnoreCase("traveler@example.com").orElseThrow();
+        var oldOffer = deliveryOffers.saveAndFlush(com.habeshlist.entity.DeliveryOffer.builder().request(stored)
+                .trip(trips.findById(UUID.fromString(travelerTrip.path("id").asText())).orElseThrow()).traveler(traveler)
+                .price(new java.math.BigDecimal("40")).status(OfferStatus.PENDING).createdAt(java.time.Instant.now()).build());
+        for (boolean approved : List.of(false, true)) {
+            ok("PUT", path + "/approval", a, Map.of("approved", approved));
+            call("POST", path + "/offers", t, Map.of("tripId", travelerTrip.path("id").asText(), "price", 40))
+                    .andExpect(status().isForbidden());
+            for (String action : List.of("accept", "decline", "withdraw"))
+                call("POST", path + "/offers/" + oldOffer.getId() + "/" + action, t, null).andExpect(status().isForbidden());
+            call("POST", path + "/demo-escrow", t, null).andExpect(status().isForbidden());
+            call("POST", path + "/rating", t, Map.of("rating", 5)).andExpect(status().isForbidden());
+            call("POST", path + "/messages", t, Map.of("body", "Disabled")).andExpect(status().isForbidden());
+            for (String status : List.of("PICKED_UP", "IN_TRANSIT", "DELIVERED", "COMPLETED", "CANCELLED", "DISPUTED"))
+                call("PUT", path + "/status", t, Map.of("status", status, "reason", "Disabled")).andExpect(status().isForbidden());
+        }
+        call("POST", path + "/offers/" + oldOffer.getId() + "/accept", s, null).andExpect(status().isBadRequest());
+        oldOffer.setStatus(OfferStatus.ACCEPTED);
+        stored.setAcceptedOffer(oldOffer);
+        stored.setStatus(DeliveryStatus.PAID_ESCROW);
+        stored.setEscrowStatus(EscrowStatus.DEMO_HELD);
+        call("PUT", path + "/status", t, Map.of("status", "PICKED_UP")).andExpect(status().isForbidden());
+        assertFalse(ok("GET", path + "/messages", t, null).path("writable").asBoolean());
+        ok("POST", path + "/messages", s, Map.of("body", "Admin will coordinate"));
+        call("POST", path + "/messages", t, Map.of("body", "Still disabled")).andExpect(status().isForbidden());
+        ok("PUT", path + "/approval", a, Map.of("approved", false));
+        call("GET", path, t, null).andExpect(status().isForbidden());
+        call("GET", path + "/messages", t, null).andExpect(status().isForbidden());
+        // Prior notification rows must not bypass approval after deployment.
+        packageNotifications.saveAndFlush(com.habeshlist.entity.PackageNotification.builder().request(stored)
+                .recipient(traveler).message("Legacy request notification").createdAt(java.time.Instant.now()).build());
+        assertFalse(ok("GET", "/api/package-queue/notifications", t, null).toString().contains(r.path("id").asText()));
+        assertEquals("PICKED_UP", move(a, r, "PICKED_UP").path("status").asText());
+        JsonNode agentRequest = request(s), agentTrip = trip(agent);
+        accept(s, agentRequest, offer(agent, agentRequest, agentTrip, 40));
+        ok("POST", path(agentRequest) + "/demo-escrow", s, null);
+        assertEquals("PICKED_UP", move(agent, agentRequest, "PICKED_UP").path("status").asText());
+        ok("POST", path(agentRequest) + "/messages", agent, Map.of("body", "Agent can still coordinate"));
+    }
+
+    @Test
     void publicRequestPreviewsExposeOnlyOpenPackageFieldsAndGatePhotosByAvailability() throws Exception {
         String s = sender();
         JsonNode r = request(s);
         UUID id = UUID.fromString(r.path("id").asText());
         var stored = requests.findById(id).orElseThrow();
         stored.setProductPhoto("data:image/jpeg;base64,dGVzdA==");
+        ok("PUT", path(r) + "/approval", admin(), Map.of("approved", true));
         String photoPath = "/api/public/requests/" + id + "/product-photo";
         JsonNode preview = ok("GET", "/api/public/requests", null, null).findParents("id").stream()
                 .filter(row -> row.path("id").asText().equals(id.toString())).findFirst().orElseThrow();
@@ -172,7 +274,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void publicTripsAreNewestPostedFirstAndIncludeTripsBeyondOldSixItemPreview() throws Exception {
-        String t = traveler();
+        String t = agentCarrier();
         List<UUID> ids = new ArrayList<>();
         for (int i = 0; i < 8; i++) {
             var input = tripInput();
@@ -208,9 +310,9 @@ class MarketplaceIntegrationTest {
     }
 
     @Test
-    void namesStayPrivateUntilAcceptanceAndContactsUntilFundingForTravelersAndAgents() throws Exception {
-        String s = sender(), a = admin(), other = newTraveler();
-        for (String selected : List.of(traveler(), login("agent@example.com", "Agent@123"))) {
+    void agentNamesStayPrivateUntilAcceptanceAndContactsUntilFunding() throws Exception {
+        String s = sender(), a = admin(), other = newAgentCarrier();
+        for (String selected : List.of(agentCarrier(), newAgentCarrier())) {
             JsonNode trip = trip(selected), otherTrip = trip(other), r = request(s);
             String realName = trip.get("traveler").get("name").asText();
             String senderName = r.get("senderContact").get("name").asText();
@@ -246,9 +348,9 @@ class MarketplaceIntegrationTest {
 
     @Test
     void packageChatUnlocksOnlyForSelectedParticipantsAndAdminsBeforeFunding() throws Exception {
-        String s = sender(), t = traveler(), other = newTraveler(), a = admin();
+        String s = sender(), t = agentCarrier(), other = newAgentCarrier(), a = admin();
         String otherSender = login("sender2@example.com", "Sender@123");
-        String agent = login("agent@example.com", "Agent@123");
+        String agent = newAgentCarrier();
         JsonNode trip = trip(t), r = request(s);
         String chat = path(r) + "/messages";
         for (String token : List.of(s, t, a, agent)) {
@@ -290,7 +392,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void chatValidatesMessagesAndPaginatesWithoutCrossPackageLeaks() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         JsonNode r = matched(s, t, trip(t));
         String chat = path(r) + "/messages";
         for (String body : List.of("", " \n\t", "x".repeat(2001)))
@@ -315,7 +417,7 @@ class MarketplaceIntegrationTest {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void simultaneousChatMessagesPersistInSequenceOrder() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         JsonNode r = matched(s, t, trip(t));
         String chat = path(r) + "/messages";
         var ready = new CountDownLatch(2);
@@ -340,7 +442,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void agentsCanPostOwnTripsWinOffersChatAndCompleteDelivery() throws Exception {
-        String s = sender(), t = traveler(), agent = login("agent@example.com", "Agent@123"), a = admin();
+        String s = sender(), t = newAgentCarrier(), agent = login("agent@example.com", "Agent@123"), a = admin();
         JsonNode agentTrip = trip(agent), travelerTrip = trip(t), r = request(s);
         assertEquals("AGENT", agentTrip.get("traveler").get("role").asText());
         JsonNode own = ok("GET", base + "/trips", agent, null);
@@ -367,7 +469,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void completeLifecycleUsesSimulatedEscrowAndRealRatings() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         JsonNode trip = trip(t), r = request(s);
         JsonNode offer = offer(t, r, trip, 42);
         assertTrue(ok("GET", path(r), t, null).get("senderContact").isNull());
@@ -399,7 +501,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void matchingEnforcesRouteWindowWeightItemRulesAndActiveTravelers() throws Exception {
-        String s = sender(), t = traveler(), second = newTraveler();
+        String s = sender(), t = agentCarrier(), second = newAgentCarrier();
         JsonNode good = trip(t), r = request(s);
         for (Map<String, Object> changes : List.<Map<String, Object>>of(
                 Map.of("origin", "Elsewhere"), Map.of("destination", "Elsewhere"),
@@ -422,7 +524,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void offersArePrivateAndSenderSelectsExactlyOne() throws Exception {
-        String s = sender(), t1 = traveler(), t2 = newTraveler();
+        String s = sender(), t1 = agentCarrier(), t2 = newAgentCarrier();
         JsonNode r = request(s), trip1 = trip(t1), trip2 = trip(t2);
         JsonNode first = offer(t1, r, trip1, 50), second = offer(t2, r, trip2, 40);
         assertEquals(1, ok("GET", path(r), t1, null).get("offers").size());
@@ -439,7 +541,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void dmvPickupsMatchAcrossCitiesForSuggestionsOffersAndAcceptance() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         List<String> locations = List.of("Alexandria, VA", "Maryland", "DC", "Washington, D.C.",
                 "Silver Spring, MD", "Arlington, Virginia", "VA", "Baltimore", "Alexandira, VA");
         for (int i = 0; i < locations.size(); i++) {
@@ -459,7 +561,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void regionalRequestsIncludeDepartureAndArrivalDateBoundaries() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         for (int[] dates : List.of(new int[]{3, 4, 3, 4}, new int[]{3, 4, 1, 5},
                 new int[]{3, 4, 3, 5}, new int[]{3, 4, 1, 4}, new int[]{3, 3, 3, 3})) {
             var input = tripInput();
@@ -494,7 +596,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void regionalMatchingDoesNotBypassOtherRulesOrIncludeUnrelatedCities() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         var tripInput = tripInput();
         tripInput.put("origin", "Washington, DC");
         JsonNode trip = ok("POST", base + "/trips", t, tripInput);
@@ -517,8 +619,8 @@ class MarketplaceIntegrationTest {
     }
 
     @Test
-    void requestMatchesShowTravelersOnlyTheirCompatibleTrips() throws Exception {
-        String s = sender(), t = traveler(), other = newTraveler();
+    void requestMatchesShowAgentsOnlyTheirCompatibleTrips() throws Exception {
+        String s = sender(), t = agentCarrier(), other = newAgentCarrier();
         JsonNode ownTrip = trip(t);
         trip(other);
         var wrongRoute = tripInput();
@@ -536,7 +638,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void invalidOffersExplainEachMismatchAndDoNotCreateAnOffer() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         var input = tripInput();
         input.put("origin", "Different pickup");
         input.put("destination", "Different destination");
@@ -562,7 +664,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void capacityIsRecheckedAtAcceptanceAndRefundRestoresIt() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         JsonNode trip = trip(t), first = request(s), second = request(s);
         JsonNode offer1 = offer(t, first, trip, 40), offer2 = offer(t, second, trip, 50);
         accept(s, first, offer1);
@@ -578,7 +680,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void disputesFreezeEscrowUntilAdminResolvesWithReason() throws Exception {
-        String s = sender(), t = traveler(), a = admin();
+        String s = sender(), t = agentCarrier(), a = admin();
         JsonNode trip = trip(t), r = matched(s, t, trip);
         ok("POST", path(r) + "/demo-escrow", s, null);
         move(t, r, "PICKED_UP");
@@ -595,7 +697,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void adminCanResolveDisputeByReleasingDemoEscrowWithoutDoubleFunding() throws Exception {
-        String s = sender(), t = traveler(), a = admin();
+        String s = sender(), t = agentCarrier(), a = admin();
         JsonNode r = matched(s, t, trip(t));
         ok("POST", path(r) + "/demo-escrow", s, null);
         call("POST", path(r) + "/demo-escrow", s, null).andExpect(status().isBadRequest());
@@ -608,7 +710,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void rankingUsesPriceRatingAndAdminVerification() throws Exception {
-        String s = sender(), t1 = traveler(), t2 = newTraveler(), a = admin();
+        String s = sender(), t1 = agentCarrier(), t2 = newAgentCarrier(), a = admin();
         JsonNode trip1 = trip(t1), trip2 = trip(t2), r = request(s);
         offer(t1, r, trip1, 40); offer(t2, r, trip2, 50);
         JsonNode before = ok("GET", path(r), s, null);
@@ -629,8 +731,8 @@ class MarketplaceIntegrationTest {
     }
 
     @Test
-    void travelerSuggestionsFavorHigherPricesAndDoNotReserveWeight() throws Exception {
-        String s = sender(), t = traveler();
+    void agentSuggestionsFavorHigherPricesAndDoNotReserveWeight() throws Exception {
+        String s = sender(), t = agentCarrier();
         JsonNode trip = trip(t), low = request(s);
         var input = requestInput(); input.put("offeredPrice", 100);
         JsonNode high = ok("POST", base + "/requests", s, input);
@@ -644,7 +746,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void validatesTripRulesDatesAndNumericFields() throws Exception {
-        String t = traveler(), s = sender();
+        String t = agentCarrier(), s = sender();
         var input = tripInput(); input.put("allowedItems", List.of("FOOD"));
         call("POST", base + "/trips", t, input).andExpect(status().isBadRequest());
         input = tripInput(); input.put("allowedItems", List.of());
@@ -662,9 +764,9 @@ class MarketplaceIntegrationTest {
     }
 
     @Test
-    void travelersBrowseSenderRequestsButNotOtherTravelersTrips() throws Exception {
+    void agentsBrowseSenderRequestsButNotOtherCarriersTrips() throws Exception {
         String s1 = sender(), s2 = login("sender2@example.com", "Sender@123");
-        String t1 = traveler(), t2 = newTraveler(), a = admin();
+        String t1 = agentCarrier(), t2 = newAgentCarrier(), a = admin();
         JsonNode trip1 = trip(t1), trip2 = trip(t2), request1 = request(s1), request2 = request(s2);
         JsonNode ownTrips = ok("GET", base + "/trips", t1, null);
         assertTrue(ownTrips.findValues("id").contains(trip1.get("id")));
@@ -700,7 +802,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void roleOwnershipAndAnonymousAccessAreEnforced() throws Exception {
-        String s = sender(), t = traveler(), a = admin(), other = login("sender2@example.com", "Sender@123");
+        String s = sender(), t = agentCarrier(), a = admin(), other = login("sender2@example.com", "Sender@123");
         call("GET", base + "/requests", null, null).andExpect(status().isUnauthorized());
         call("POST", base + "/trips", s, tripInput()).andExpect(status().isForbidden());
         call("POST", base + "/requests", t, requestInput()).andExpect(status().isForbidden());
@@ -711,14 +813,14 @@ class MarketplaceIntegrationTest {
         call("GET", base + "/trips/" + trip.get("id").asText() + "/matches", s, null).andExpect(status().isForbidden());
         JsonNode all = ok("GET", base + "/requests", a, null);
         assertTrue(all.findValues("id").contains(r.get("id")));
-        String stranger = newTraveler();
+        String stranger = newAgentCarrier();
         call("POST", path(r) + "/offers", stranger, Map.of("tripId", trip.get("id").asText(), "price", 50)).andExpect(status().isForbidden());
         call("POST", path(r) + "/rating", s, Map.of("rating", 5)).andExpect(status().isBadRequest());
     }
 
     @Test
     void offerWithdrawalAndDeclineAllowAnotherOfferButNotDuplicates() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         JsonNode trip = trip(t), r = request(s), first = offer(t, r, trip, 45);
         call("POST", path(r) + "/offers", t, Map.of("tripId", trip.get("id").asText(), "price", 44)).andExpect(status().isBadRequest());
         ok("POST", path(r) + "/offers/" + first.get("id").asText() + "/withdraw", t, null);
@@ -730,7 +832,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void queueMutationsAreRetiredAndNotificationsReachSenders() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         JsonNode r = request(s), trip = trip(t);
         offer(t, r, trip, 40);
         JsonNode messages = ok("GET", "/api/package-queue/notifications", s, null);
@@ -743,7 +845,7 @@ class MarketplaceIntegrationTest {
 
     @Test
     void publicTripSummariesExcludePrivateFieldsAndUnavailableTrips() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         var input = tripInput(); input.put("capacityKg", 4);
         JsonNode trip = ok("POST", base + "/trips", t, input);
         JsonNode data = ok("GET", "/api/public/travel", null, null);
@@ -758,7 +860,7 @@ class MarketplaceIntegrationTest {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void simultaneousAcceptancesCannotOverbookOneTrip() throws Exception {
-        String s = sender(), t = traveler();
+        String s = sender(), t = agentCarrier();
         JsonNode trip = trip(t), r1 = request(s), r2 = request(s);
         JsonNode o1 = offer(t, r1, trip, 40), o2 = offer(t, r2, trip, 45);
         var ready = new CountDownLatch(2);
@@ -784,7 +886,7 @@ class MarketplaceIntegrationTest {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void simultaneousOffersCannotBothBeSelectedForOneRequest() throws Exception {
-        String s = sender(), t1 = traveler(), t2 = newTraveler();
+        String s = sender(), t1 = agentCarrier(), t2 = newAgentCarrier();
         JsonNode trip1 = trip(t1), trip2 = trip(t2), r = request(s);
         JsonNode o1 = offer(t1, r, trip1, 40), o2 = offer(t2, r, trip2, 45);
         var ready = new CountDownLatch(2);

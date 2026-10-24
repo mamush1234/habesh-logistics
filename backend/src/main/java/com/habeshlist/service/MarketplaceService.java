@@ -75,6 +75,9 @@ public class MarketplaceService {
         return r.getAcceptedOffer() != null && r.getAcceptedOffer().getTraveler().getId().equals(actorId());
     }
     private boolean visible(DeliveryRequest r) {
+        if (SecurityUtils.currentUser().role() == Role.TRAVELER) {
+            return r.isAdminApproved();
+        }
         return admin() || sender(r) || guestOwner(r) || carrier(r)
                 || (SecurityUtils.currentUser().role() != Role.SENDER && r.getStatus() == DeliveryStatus.REQUESTED);
     }
@@ -115,7 +118,7 @@ public class MarketplaceService {
     }
 
     private boolean publiclyAvailable(DeliveryRequest r) {
-        return r.getStatus() == DeliveryStatus.REQUESTED && !r.getDeadline().isBefore(today())
+        return r.isAdminApproved() && r.getStatus() == DeliveryStatus.REQUESTED && !r.getDeadline().isBefore(today())
                 && (r.getSender() == null || r.getSender().isActive());
     }
 
@@ -158,6 +161,19 @@ public class MarketplaceService {
     public RequestDto getRequest(UUID id) {
         DeliveryRequest r = request(id);
         permit(visible(r));
+        return requestDto(r);
+    }
+
+    @Transactional
+    public RequestDto setApproval(UUID id, boolean approved) {
+        permit(admin());
+        DeliveryRequest r = lockRequest(id);
+        if (r.isAdminApproved() != approved) {
+            r.setAdminApproved(approved);
+            record(r, approved ? "Admin approved request for read-only traveler visibility"
+                    : "Admin removed request from traveler and public visibility");
+            if (approved) notifications.notifyTravelersOfApproval(r);
+        }
         return requestDto(r);
     }
 
@@ -235,6 +251,7 @@ public class MarketplaceService {
     @Transactional(readOnly = true)
     public List<MatchDto> matchesForRequest(UUID id) {
         DeliveryRequest r = request(id);
+        permit(visible(r));
         boolean traveler = offeringRole();
         permit(sender(r) || admin() || (traveler && visible(r)));
         List<MarketTrip> candidates = trips.findAllByOrderByDepartureDateAscCreatedAtAsc().stream()
@@ -257,6 +274,7 @@ public class MarketplaceService {
         MarketTrip t = trips.findById(id).orElseThrow(() -> new NotFoundException("Trip not found"));
         permit(t.getTraveler().getId().equals(actorId()) || admin());
         List<DeliveryRequest> candidates = requests.findAllByOrderByCreatedAtDesc().stream()
+                .filter(this::visible)
                 .filter(r -> compatible(r, t)).toList();
         BigDecimal maximum = candidates.stream().map(DeliveryRequest::getOfferedPrice).max(BigDecimal::compareTo)
                 .orElse(BigDecimal.ONE);
@@ -270,7 +288,7 @@ public class MarketplaceService {
     @Transactional
     public RequestDto sendOffer(UUID requestId, OfferInput input) {
         User user = actor();
-        permit(offeringRole());
+        permit(user.getRole() == Role.AGENT);
         DeliveryRequest r = lockRequest(requestId);
         MarketTrip t = lockTrip(input.tripId());
         permit(t.getTraveler().getId().equals(user.getId()));
@@ -294,12 +312,15 @@ public class MarketplaceService {
 
     @Transactional
     public RequestDto acceptOffer(UUID requestId, UUID offerId) {
+        permit(SecurityUtils.currentUser().role() != Role.TRAVELER);
         DeliveryRequest r = lockRequest(requestId);
         permit(managesSender(r));
         require(r.getStatus() == DeliveryStatus.REQUESTED, "This request already has an accepted offer or is closed");
         DeliveryOffer offer = offers.findById(offerId).orElseThrow(() -> new NotFoundException("Offer not found"));
         require(offer.getRequest().getId().equals(requestId) && offer.getStatus() == OfferStatus.PENDING,
                 "Select a pending offer for this request");
+        require(offer.getTraveler().getRole() != Role.TRAVELER,
+                "Traveler request management is disabled; only agent offers can be accepted");
         MarketTrip trip = lockTrip(offer.getTrip().getId());
         requireCompatible(r, trip);
         trip.setReservedKg(trip.getReservedKg().add(r.getWeightKg()));
@@ -322,6 +343,7 @@ public class MarketplaceService {
 
     @Transactional
     public RequestDto decideOffer(UUID requestId, UUID offerId, boolean withdraw) {
+        permit(SecurityUtils.currentUser().role() != Role.TRAVELER);
         DeliveryRequest r = lockRequest(requestId);
         DeliveryOffer offer = offers.findById(offerId).orElseThrow(() -> new NotFoundException("Offer not found"));
         permit(withdraw ? offer.getTraveler().getId().equals(actorId()) : managesSender(r));
@@ -333,6 +355,7 @@ public class MarketplaceService {
 
     @Transactional
     public RequestDto fundDemoEscrow(UUID id) {
+        permit(SecurityUtils.currentUser().role() != Role.TRAVELER);
         DeliveryRequest r = lockRequest(id);
         permit(managesSender(r));
         require(r.getStatus() == DeliveryStatus.MATCHED && r.getEscrowStatus() == EscrowStatus.NONE,
@@ -347,6 +370,7 @@ public class MarketplaceService {
 
     @Transactional
     public RequestDto transition(UUID id, TransitionInput input) {
+        permit(SecurityUtils.currentUser().role() != Role.TRAVELER);
         DeliveryRequest r = lockRequest(id);
         permit(sender(r) || carrier(r) || admin());
         DeliveryStatus from = r.getStatus(), to = input.status();
@@ -393,6 +417,7 @@ public class MarketplaceService {
 
     @Transactional
     public RequestDto rate(UUID id, int rating) {
+        permit(SecurityUtils.currentUser().role() != Role.TRAVELER);
         DeliveryRequest r = lockRequest(id);
         permit(sender(r));
         require(r.getStatus() == DeliveryStatus.COMPLETED && r.getRating() == null, "Rate a completed delivery once");
@@ -454,7 +479,8 @@ public class MarketplaceService {
                             ? r.getSender().getFirstName() + " " + r.getSender().getLastName() : null,
                 r.getSender() == null, r.getProductPhoto() != null,
                 admin() && r.getConvertedShipment() != null ? r.getConvertedShipment().getId() : null,
-                admin() && r.getConvertedShipment() != null ? r.getConvertedShipment().getTrackingNumber() : null);
+                admin() && r.getConvertedShipment() != null ? r.getConvertedShipment().getTrackingNumber() : null,
+                r.isAdminApproved());
     }
 
     @Transactional(readOnly = true)

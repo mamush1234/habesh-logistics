@@ -38,6 +38,8 @@ public class DeliveryChatService {
                 || (request.getAcceptedOffer() != null && request.getAcceptedOffer().getTraveler().getId().equals(id));
     }
     private void checkAccess(DeliveryRequest request) {
+        if (SecurityUtils.currentUser().role() == Role.TRAVELER && !request.isAdminApproved())
+            throw new AccessDeniedException("This request is awaiting administrator approval");
         if (request.getSender() == null)
             throw new AccessDeniedException("Guest requests are coordinated directly by an administrator; package chat is unavailable");
         if (request.getAcceptedOffer() == null
@@ -46,6 +48,7 @@ public class DeliveryChatService {
     }
     private boolean writable(DeliveryRequest request) {
         return request.getSender() != null && participant(request) && SecurityUtils.currentUser().role() != Role.ADMIN
+                && SecurityUtils.currentUser().role() != Role.TRAVELER
                 && request.getStatus() != DeliveryStatus.COMPLETED && request.getStatus() != DeliveryStatus.CANCELLED;
     }
     private MessageDto dto(DeliveryMessage message) {
@@ -69,6 +72,8 @@ public class DeliveryChatService {
 
     @Transactional
     public MessageDto send(UUID id, MessageInput input) {
+        if (SecurityUtils.currentUser().role() == Role.TRAVELER)
+            throw new AccessDeniedException("Travelers have read-only access to approved sender requests");
         DeliveryRequest request = requests.findForUpdate(id).orElseThrow(() -> new NotFoundException("Request not found"));
         checkAccess(request);
         if (!participant(request) || SecurityUtils.currentUser().role() == Role.ADMIN)

@@ -59,6 +59,11 @@ class MarketplaceMigrationTest {
             assertNull(jdbc.queryForObject("SELECT guest_account_id FROM delivery_requests WHERE id = ?", UUID.class, guestId));
             jdbc.update("UPDATE delivery_requests SET guest_account_id = ? WHERE id = ?", userId, guestId);
             assertEquals(userId, jdbc.queryForObject("SELECT guest_account_id FROM delivery_requests WHERE id = ?", UUID.class, guestId));
+            new ResourceDatabasePopulator(new ClassPathResource("db/migration/V17__sender_request_admin_approval.sql")).execute(source);
+            assertFalse(jdbc.queryForObject("SELECT admin_approved FROM delivery_requests WHERE id = ?", Boolean.class, requestId));
+            assertFalse(jdbc.queryForObject("SELECT admin_approved FROM delivery_requests WHERE id = ?", Boolean.class, guestId));
+            jdbc.update("UPDATE delivery_requests SET admin_approved = true WHERE id = ?", requestId);
+            assertTrue(jdbc.queryForObject("SELECT admin_approved FROM delivery_requests WHERE id = ?", Boolean.class, requestId));
             assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM delivery_messages", Integer.class));
         } catch (java.sql.SQLException ex) {
             throw new AssertionError("Migration connection failed", ex);

@@ -30,15 +30,22 @@ public class PackageNotificationService {
     }
 
     public void broadcastRequest(DeliveryRequest request) {
-        Stream.of(Role.ADMIN, Role.AGENT, Role.TRAVELER)
+        Stream.of(Role.ADMIN, Role.AGENT)
                 .flatMap(role -> users.findAllByRole(role).stream()).filter(User::isActive)
                 .forEach(user -> notifyRequest(request, user, "A delivery request is available: "
                         + request.getPickupCity() + " to " + request.getDestinationCity() + ". Browse marketplace matches."));
     }
 
     public void notifyRequest(DeliveryRequest request, User user, String message) {
+        if (user.getRole() == Role.TRAVELER && !request.isAdminApproved()) return;
         if (user.isActive()) notifications.save(PackageNotification.builder().recipient(user).request(request)
                 .message(message).createdAt(clock.instant()).build());
+    }
+
+    public void notifyTravelersOfApproval(DeliveryRequest request) {
+        users.findAllByRole(Role.TRAVELER).forEach(user -> notifyRequest(request, user,
+                "An admin-approved sender request is available to view: " + request.getPickupCity()
+                        + " to " + request.getDestinationCity() + ". Traveler access is read-only."));
     }
 
     public void notifyAdmins(DeliveryRequest request, String message) {
@@ -48,7 +55,9 @@ public class PackageNotificationService {
     @Transactional(readOnly = true)
     public List<PackageQueueDtos.NotificationDto> list() {
         return notifications.findTop100ByRecipientIdOrderByCreatedAtDesc(SecurityUtils.currentUser().userId())
-                .stream().map(n -> new PackageQueueDtos.NotificationDto(n.getId(),
+                .stream().filter(n -> SecurityUtils.currentUser().role() != Role.TRAVELER
+                        || n.getRequest() == null || n.getRequest().isAdminApproved())
+                .map(n -> new PackageQueueDtos.NotificationDto(n.getId(),
                         n.getShipment() == null ? null : n.getShipment().getId(),
                         n.getRequest() == null ? null : n.getRequest().getId(),
                         n.getMessage(), n.getCreatedAt(), n.getReadAt())).toList();
@@ -60,6 +69,9 @@ public class PackageNotificationService {
         if (!notification.getRecipient().getId().equals(SecurityUtils.currentUser().userId())) {
             throw new AccessDeniedException("Not your notification");
         }
+        if (SecurityUtils.currentUser().role() == Role.TRAVELER && notification.getRequest() != null
+                && !notification.getRequest().isAdminApproved())
+            throw new AccessDeniedException("This request is awaiting administrator approval");
         if (notification.getReadAt() == null) notification.setReadAt(clock.instant());
     }
 }

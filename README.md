@@ -45,7 +45,47 @@ requests from active senders (or admin-managed guest requests) qualify. Public p
 access uses the same availability checks and `Cache-Control: no-store`; matched,
 closed and expired request photos return 404. No names, account IDs, descriptions,
 offers, history, contacts, manifests or tracking data are public. Full request
-details and making offers still require login and existing role permissions.
+details still require login and existing role permissions; only agents can
+currently make offers. Public request previews and photos additionally require
+explicit admin approval.
+
+## Temporary traveler read-only policy and admin request approval
+
+All sender requests (registered and guest) require explicit approval before
+travelers can see them. **V17** adds `admin_approved` with a default of false:
+all existing requests remain in the database but start unapproved, as do new
+requests. This approval is separate from offer acceptance and shipment status;
+it does not reserve capacity, accept an offer, fund escrow, or convert a shipment.
+
+Admins open **Marketplace**, filter **Traveler approval > Awaiting approval**,
+open a request, and select **Approve for traveler viewing**. **Remove traveler
+approval** hides it again. The admin-only
+`PUT /api/marketplace/requests/{id}/approval` accepts `{approved: true|false}`.
+Changes are recorded in the request timeline with the admin actor; repeated
+identical approvals do not duplicate events or notifications.
+
+Travelers may view only approved requests, including previously matched requests.
+Direct detail/photo URLs, match suggestions, public previews/photos, package chat
+and old notification rows cannot expose unapproved requests. Approval notifies
+active travelers; submission notifies admins and agents only. Revoking approval
+also hides existing request notifications. Public previews still require an open,
+unexpired request; authenticated traveler lists may show approved requests at
+other statuses.
+
+Traveler accounts cannot send offers, accept/decline/withdraw offers, fund escrow,
+change request delivery status, rate, or send package chat messages. These rules
+are enforced on the server as well as in the UI. Existing traveler offers/history
+are retained, but pending traveler offers cannot be accepted while this policy is
+active. Matched travelers can read existing chat only while the request is approved.
+Admins can continue delivery updates for previously matched travelers. Travelers
+can still post their own trips; separate operational shipment/trip workflows are
+unchanged.
+
+**Agents retain their existing request visibility and offer/chat/delivery
+permissions**, regardless of approval. Senders still see their own requests and
+can manage normal account requests; guest-account requests remain read-only.
+This temporary policy supersedes traveler mutation capabilities described in the
+general marketplace lifecycle below.
 
 # Private guest sender requests
 
@@ -58,9 +98,15 @@ email, submission creates an active sender account and sender profile with the
 provided name, normalized email and required phone number. This is separate from
 the removed account-invitation feature.
 
-The success page shows the new login email and a unique, cryptographically random
-temporary password **once**. Save it before leaving or refreshing. The password is
-stored only as a BCrypt hash; it is not available in link checks, retries, admin
+After submission, a newly created sender is automatically signed in using the
+one-time login email and unique, cryptographically random temporary password.
+The customer is taken directly to **Change password**, with their temporary
+password filled in and a request-received confirmation. The password is kept only
+in React memory for this session; only the normal session token goes into browser
+storage. Refreshing discards the prefilled password. If automatic sign-in fails,
+the receipt explicitly reports the error, displays the credentials once for the
+customer to save, and offers a sign-in retry without resubmitting the package.
+The password is stored server-side only as a BCrypt hash; it is not available in link checks, retries, admin
 lists, logs, or browser storage. Credential-bearing responses use `Cache-Control:
 no-store`. If the response is lost, contact the team; retrying cannot recover or
 reset credentials. No automatic password recovery/delivery is provided.
@@ -87,14 +133,16 @@ browser using the existing photo helper, then validated and re-encoded on the
 server (maximum 2 MB, 4096 pixels per side, 16 million pixels). This removes
 embedded image metadata. Guests should not include contacts in public package
 descriptions or photos. The form explains that open request route/photo previews
-are public while contact details stay private. After submission, the page says:
+become public only after admin approval, while contact details stay private.
+After submission, the page says:
 **"Your request has been received. We will contact you once we find a traveler."**
 Reloads and duplicate submissions return this receipt without credentials or contact data;
 concurrent retries cannot create duplicate requests.
 
-Guest requests enter the existing marketplace and notify active admins,
-travelers, and agents. Travelers/agents can inspect package details and the
-product photo, match their own trips, and submit offers as usual. Admins see
+Guest requests enter the existing marketplace and notify active admins and agents.
+Travelers are notified after admin approval and then have read-only access.
+Agents can inspect package details and the product photo, match their own trips,
+and submit offers as usual. Admins see
 the guest's contact details immediately and accept/decline offers on the guest's
 behalf. They can also simulate escrow funding and manage delivery status.
 Regular account-owned requests still require the owning sender to select an
@@ -215,7 +263,7 @@ requests and see only their own posted trips, never another traveler's trip
 profile in the authenticated trip list. This restriction is enforced server-side,
 including trip-match ownership checks. Public landing previews remain anonymous
 route/date/capacity summaries without traveler identities. Admins retain full
-visibility. Travelers and agents submit offers using only their own compatible
+visibility. Agents submit offers using only their own compatible
 delivery trips, and only the owning sender selects an offer. Agent accounts are
 still administrator-created; enabling offers does not enable public agent signup.
 Before acceptance, trip listings, suggestions, and pending offers use anonymous

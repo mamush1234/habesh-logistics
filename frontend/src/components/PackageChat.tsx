@@ -34,11 +34,12 @@ export function PackageChat({ requestId, closed }: { requestId: string; closed: 
   useEffect(() => {
     if (followLatest.current && history.current) history.current.scrollTop = history.current.scrollHeight;
   }, [latestId]);
-  const writable = !closed && user?.role !== 'ADMIN' && query.data?.pages[0].writable && !query.isError;
+  const writable = !closed && user?.role !== 'ADMIN' && user?.role !== 'TRAVELER' && query.data?.pages[0].writable && !query.isError;
   return <section className="card space-y-4" aria-labelledby="package-chat-title">
     <h2 id="package-chat-title" className="text-xl font-bold">Package chat</h2>
-    <p className="text-sm text-ink-600">Only this package's sender and selected traveler or agent can message here. Administrators can review the conversation. Chat opens after offer acceptance, before escrow funding; anything you send is visible immediately.</p>
+    <p className="text-sm text-ink-600">Only this package's sender and selected agent can send messages for now. Matched travelers can read existing chat on approved requests only. Administrators can review the conversation. Chat opens after offer acceptance, before escrow funding; anything you send is visible immediately.</p>
     {user?.role === 'ADMIN' && <p className="text-sm font-semibold">Administrator review &middot; Read-only</p>}
+    {user?.role === 'TRAVELER' && <p className="text-sm font-semibold">Traveler access is temporarily read-only. Contact an administrator to coordinate.</p>}
     {closed && <p className="text-sm font-semibold">This delivery is closed. Chat history is read-only.</p>}
     {query.isPending && <p role="status">Loading package chat...</p>}
     {query.isError && <p role="alert">Could not load package chat. You may no longer have access. <button className="underline" onClick={() => query.refetch()}>Retry</button></p>}

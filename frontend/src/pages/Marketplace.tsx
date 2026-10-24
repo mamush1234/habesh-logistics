@@ -31,6 +31,7 @@ export function RequestCard({ request, score }: { request: MarketRequest; score?
       <span className="text-xs font-bold rounded-full bg-blue-100 text-blue-900 px-3 py-1">{display(request.status)}</span></div>
     <p>{display(request.itemType)} &middot; {request.weightKg} kg &middot; Offered {money(request.offeredPrice)}</p>
     <p className="text-sm">Available {request.availableFrom} &middot; Deadline {request.deadline}</p>
+    <p className="text-sm font-semibold">{request.adminApproved ? 'Admin approved' : 'Awaiting admin approval'}</p>
     <p className="text-sm break-words">{request.description}</p>
     {score != null && <p className="text-sm font-semibold">Match score: {score.toFixed(2)}</p>}
     <Link to={`/marketplace/requests/${request.id}`} className="btn btn-primary">{request.guestRequest ? 'View admin-managed request' : 'View request and offers'}</Link>
@@ -66,14 +67,14 @@ export function MarketRequestForm() {
   }, [selectedTrip]);
   const mutation = useMutation({
     mutationFn: () => MarketplaceApi.createRequest({ ...form, weightKg: Number(form.weightKg), offeredPrice: Number(form.offeredPrice) }),
-    onSuccess: request => { qc.invalidateQueries({ queryKey: ['marketplace'] }); toast.success('Request posted. Review suggested matches and traveler offers.'); navigate(`/marketplace/requests/${request.id}`); },
+    onSuccess: request => { qc.invalidateQueries({ queryKey: ['marketplace'] }); toast.success('Request posted. Awaiting admin approval for traveler visibility; agents can send offers.'); navigate(`/marketplace/requests/${request.id}`); },
     onError: marketError,
   });
   return <div className="max-w-2xl mx-auto space-y-5">
     <h1 className="text-3xl font-bold">Post a delivery request</h1><DemoNotice />
     {selectedTrip && <TripCard trip={selectedTrip} />}
     {trips.isError && <p role="alert">Could not load the selected trip. <button className="underline" onClick={() => trips.refetch()}>Retry</button></p>}
-    <p className="text-sm">Travelers and agents send offers, then you choose one. Posting does not reserve a trip. Do not include contact details in the public description.</p>
+    <p className="text-sm">Agents can send offers, then you choose one. Travelers can view your request only after admin approval and cannot manage it or make offers for now. Posting does not reserve a trip. Do not include contact details in the public description.</p>
     <form className="card grid sm:grid-cols-2 gap-4" onSubmit={e => { e.preventDefault(); mutation.mutate(); }}>
       <MarketRequestFields form={form} onChange={setForm} />
       <button className="btn btn-brand sm:col-span-2" disabled={mutation.isPending}>{mutation.isPending ? 'Posting...' : 'Post request'}</button>
@@ -116,9 +117,11 @@ function TripForm() {
 
 export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tripsOnly?: boolean; myPackagesOnly?: boolean }) {
   const { user } = useAuth();
-  const canOffer = user?.role === 'TRAVELER' || user?.role === 'AGENT';
+  const canPostTrip = user?.role === 'TRAVELER' || user?.role === 'AGENT';
+  const canOffer = user?.role === 'AGENT';
   const qc = useQueryClient();
   const [status, setStatus] = useState('');
+  const [approval, setApproval] = useState('');
   const [search, setSearch] = useState('');
   const [tripId, setTripId] = useState('');
   const [tripFilters, setTripFilters] = useState(initialTripFilters);
@@ -129,18 +132,21 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
   const verify = useMutation({ mutationFn: ({ id, level }: { id: string; level: VerificationLevel }) => MarketplaceApi.verify(id, level),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['marketplace'] }); toast.success('Verification updated'); }, onError: marketError });
   const owned = trips.data?.filter(t => t.traveler.id === user?.id) ?? [];
-  const visibleTrips = trips.data && filterTrips(canOffer ? owned : trips.data, tripFilters);
+  const visibleTrips = trips.data && filterTrips(canPostTrip ? owned : trips.data, tripFilters);
   const filtered = requests.data?.filter(r => (!myPackagesOnly || r.senderId === user?.id)
-    && (!status || r.status === status) && `${r.pickupCity} ${r.destinationCity} ${r.description}`.toLowerCase().includes(search.toLowerCase()));
+    && (!status || r.status === status)
+    && (user?.role !== 'ADMIN' || !approval || r.adminApproved === (approval === 'approved'))
+    && `${r.pickupCity} ${r.destinationCity} ${r.description}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="space-y-6">
-    <div className="flex flex-wrap justify-between items-center gap-3"><h1 className="text-3xl font-bold">{myPackagesOnly ? 'My packages' : user?.role === 'SENDER' ? 'Traveler / agent trips' : tripsOnly ? 'My delivery trips' : canOffer ? 'Sender requests' : 'Delivery marketplace'}</h1>
+    <div className="flex flex-wrap justify-between items-center gap-3"><h1 className="text-3xl font-bold">{myPackagesOnly ? 'My packages' : user?.role === 'SENDER' ? 'Traveler / agent trips' : tripsOnly ? 'My delivery trips' : canPostTrip ? 'Sender requests' : 'Delivery marketplace'}</h1>
       {user?.role === 'SENDER' && <Link to="/send" className="btn btn-brand">Post a request</Link>}
       {!myPackagesOnly && (user?.role === 'SENDER'
         ? <Link className="btn btn-ghost" to="/my-shipments">My packages</Link>
-        : <Link className="btn btn-ghost" to={tripsOnly ? '/marketplace' : '/traveler'}>{tripsOnly ? 'Browse requests' : canOffer ? 'Post a trip' : 'Delivery trips'}</Link>)}
+        : <Link className="btn btn-ghost" to={tripsOnly ? '/marketplace' : '/traveler'}>{tripsOnly ? 'Browse requests' : canPostTrip ? 'Post a trip' : 'Delivery trips'}</Link>)}
     </div>
     {myPackagesOnly ? <p className="text-sm text-ink-500">Only your packages are listed here. Open a package to view its progress. Requests submitted through a private guest link are read-only and managed by our team; for regular account requests, you manage offers.</p> : <DemoNotice />}
-    {tripsOnly && canOffer && <TripForm />}
+    {user?.role === 'TRAVELER' && <p role="note">Only admin-approved sender requests are visible. Traveler access is temporarily read-only: no offers, delivery changes or chat messages. You can still post your own trips.</p>}
+    {tripsOnly && canPostTrip && <TripForm />}
     {canOffer && <section className="card space-y-3">
       <h2 className="text-xl font-semibold">Suggested requests for your trip</h2>
       <label className="label">Your trip<select className="input" value={tripId} onChange={e => setTripId(e.target.value)}>
@@ -154,6 +160,9 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
     </section>}
     {showRequests && <>
       <div className="flex flex-wrap gap-3">
+        {user?.role === 'ADMIN' && <label className="label">Traveler approval<select className="input" value={approval} onChange={e => setApproval(e.target.value)}>
+          <option value="">All approvals</option><option value="pending">Awaiting approval</option><option value="approved">Approved</option>
+        </select></label>}
         <label className="label">Status<select className="input" value={status} onChange={e => setStatus(e.target.value)}><option value="">All statuses</option>{deliveryStatuses.map(s => <option key={s}>{s}</option>)}</select></label>
         <label className="label flex-1">Search requests<input className="input" value={search} onChange={e => setSearch(e.target.value)} /></label>
       </div>
@@ -162,7 +171,7 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
       {filtered?.length === 0 && <p>No delivery requests found.</p>}
       <div className="space-y-4">{filtered?.map(r => <RequestCard key={r.id} request={r} />)}</div>
     </>}
-    {!myPackagesOnly && <><section className="space-y-4"><h2 className="text-2xl font-bold">{canOffer ? 'Your posted trips' : 'Available traveler / agent trips'}</h2>
+    {!myPackagesOnly && <><section className="space-y-4"><h2 className="text-2xl font-bold">{canPostTrip ? 'Your posted trips' : 'Available traveler / agent trips'}</h2>
       <TripListFilters value={tripFilters} onChange={setTripFilters} />
       {trips.isPending && <p role="status">Loading trips...</p>}
       {trips.isError && <p role="alert">Could not load trips. <button className="underline" onClick={() => trips.refetch()}>Retry</button></p>}

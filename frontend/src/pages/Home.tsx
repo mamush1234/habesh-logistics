@@ -2,13 +2,14 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { PublicApi } from '../api/endpoints';
+import { MarketplaceApi } from '../api/marketplace';
 import { useAuth } from '../auth/AuthContext';
 import { RequestThumbnail } from '../components/RequestThumbnail';
 import { filterTrips, initialTripFilters, TripListFilters } from '../components/TripListFilters';
 
 const steps = [
   { title: 'Post or search', description: 'Senders describe the parcel. Travelers share their route and spare luggage space.' },
-  { title: 'Agree on a price', description: 'Travelers send offers, and the sender picks the one that fits.' },
+  { title: 'Agree on a price', description: 'Agents send offers, and the sender picks the one that fits. Travelers currently view approved requests only.' },
   { title: 'Hand over safely', description: 'Track delivery together. The sender confirms completion to release demo escrow.' },
 ];
 const trust = [
@@ -34,11 +35,15 @@ export function Home() {
   const results = useRef<HTMLElement>(null);
   const travel = useQuery({ queryKey: ['public-travel'], queryFn: PublicApi.travel, enabled: !showingRequests, refetchInterval: 60_000 });
   const requests = useQuery({ queryKey: ['public-requests'], queryFn: PublicApi.requests, enabled: showingRequests, refetchInterval: 15_000 });
+  const internalRequests = user?.role === 'AGENT' || user?.role === 'ADMIN';
+  const accountRequests = useQuery({ queryKey: ['marketplace', 'requests', user?.id], queryFn: MarketplaceApi.requests,
+    enabled: showingRequests && internalRequests, refetchInterval: 15_000 });
+  const requestResults = internalRequests ? accountRequests : requests;
   const postTripTo = !user ? '/register?role=TRAVELER&next=%2Ftraveler'
     : traveler ? '/traveler' : user.role === 'SENDER' ? '/my-shipments' : '/marketplace';
   const trips = travel.data && filterTrips(travel.data.filter(t => includesCity(t.origin, search.from) && includesCity(t.destination, search.to)
     && (!search.date || t.departureDate === search.date)), tripFilters);
-  const packages = requests.data?.filter(r => includesCity(r.pickupCity, search.from)
+  const packages = (internalRequests ? accountRequests.data?.filter(r => r.status === 'REQUESTED') : requests.data)?.filter(r => includesCity(r.pickupCity, search.from)
     && includesCity(r.destinationCity, search.to) && (!search.date || (r.availableFrom <= search.date && r.deadline >= search.date)));
   function selectMode(next: 'send' | 'travel') {
     setMode(next);
@@ -68,7 +73,7 @@ export function Home() {
           <label>Departure date<input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></label>
           <button className="home-button home-button-gold" type="submit">{showingRequests ? 'Find packages' : 'Find travelers'}</button>
         </div>
-        <p className="search-note">{showingRequests ? 'Browse open sender requests. The departure date must fall within the package availability window. Sign in as a traveler or agent to review details and make offers.' : 'Browse upcoming traveler posts, newest first. Filter by exact departure date above or use the date range below. Confirm arrival before the delivery deadline when matching.'}</p>
+        <p className="search-note">{showingRequests ? 'Browse open sender requests. Public visitors and travelers see only admin-approved requests. Traveler access is read-only; agents can still make offers. The departure date must fall within the package availability window.' : 'Browse upcoming traveler posts, newest first. Filter by exact departure date above or use the date range below. Confirm arrival before the delivery deadline when matching.'}</p>
       </form>
     </section>
 
@@ -78,11 +83,11 @@ export function Home() {
         <Link to={postTripTo} className="home-text-link">{user?.role === 'SENDER' ? 'My packages' : user && !traveler ? 'Open marketplace' : 'Post your trip'}</Link>
       </div>
       {showingRequests ? <>
-        {requests.isPending && <p role="status">Finding sender requests...</p>}
-        {requests.isError && <p role="alert">Could not load requests. <button className="home-text-link" onClick={() => requests.refetch()}>Try again</button></p>}
-        {packages?.length === 0 && <p className="home-empty">No open requests match this search. Try another city or date, or <Link className="home-text-link" to="/marketplace">browse sender requests</Link>.</p>}
+        {requestResults.isPending && <p role="status">Finding sender requests...</p>}
+        {requestResults.isError && <p role="alert">Could not load requests. <button className="home-text-link" onClick={() => requestResults.refetch()}>Try again</button></p>}
+        {packages?.length === 0 && <p className="home-empty">{internalRequests ? 'No open requests match this search.' : 'No admin-approved open requests match this search.'} Try another city or date, or <Link className="home-text-link" to="/marketplace">browse sender requests</Link>.</p>}
         <div className="home-request-list">{packages?.map(r => <article key={r.id} className="home-trip-card home-request-card">
-          <RequestThumbnail id={r.id} hasPhoto={r.hasProductPhoto} publicPreview />
+          <RequestThumbnail id={r.id} hasPhoto={r.hasProductPhoto} publicPreview={!internalRequests} />
           <div className="home-request-content">
             <h3>{r.pickupCity} to {r.destinationCity}</h3>
             <p>Drop-off {formatDate(r.availableFrom)} &middot; Deliver by {formatDate(r.deadline)}</p>
@@ -103,7 +108,7 @@ export function Home() {
           <Link className="home-button home-button-outline" data-testid="cta-send" to={user && user.role !== 'SENDER' ? '/marketplace' : `/send?travel=${encodeURIComponent(t.id)}`}>{user && user.role !== 'SENDER' ? 'Open marketplace' : 'Request space'}</Link>
         </article>)}</div>
       </>}
-      <p className="home-section-note">{showingRequests ? 'DC, Maryland, and Northern Virginia share one pickup region for trip matching.' : 'Prices are agreed through traveler offers. Public previews do not expose traveler identities or ratings.'}</p>
+      <p className="home-section-note">{showingRequests ? 'DC, Maryland, and Northern Virginia share one pickup region for trip matching.' : 'Prices are agreed through agent offers; traveler request management is temporarily disabled. Public previews do not expose traveler identities or ratings.'}</p>
       {(!user || user.role === 'SENDER') && <Link to="/send" className="home-text-link">Post a delivery request</Link>}
     </section>
 

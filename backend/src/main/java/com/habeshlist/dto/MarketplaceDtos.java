@@ -26,6 +26,7 @@ public final class MarketplaceDtos {
     public record TransitionInput(@NotNull DeliveryStatus status, @Size(max = 1000) String reason) {}
     public record RatingInput(@NotNull @Min(1) @Max(5) Integer rating) {}
     public record VerificationInput(@NotNull VerificationLevel level) {}
+    public record ApprovalInput(@NotNull Boolean approved) {}
     public record TravelerDto(UUID id, String name, Double rating, long ratingCount, VerificationLevel verification, Role role) {}
     public record TripDto(UUID id, TravelerDto traveler, String origin, String destination, LocalDate departureDate,
             LocalDate expectedArrivalDate, BigDecimal capacityKg, BigDecimal availableKg,
@@ -40,7 +41,7 @@ public final class MarketplaceDtos {
             BigDecimal escrowAmount, UUID acceptedOfferId, Integer rating, String disputeReason,
             List<OfferDto> offers, List<EventDto> timeline, ContactDto senderContact, ContactDto travelerContact,
             Instant createdAt, String senderName, boolean guestRequest, boolean hasProductPhoto,
-            UUID convertedShipmentId, String shipmentTrackingNumber) {}
+            UUID convertedShipmentId, String shipmentTrackingNumber, boolean adminApproved) {}
     public record MatchDto(RequestDto request, TripDto trip, BigDecimal price, double score) {}
     public record MessageInput(@NotBlank @Size(max = 2000) String body) {}
     public record MessageDto(UUID id, UUID authorId, String authorName, Role authorRole,

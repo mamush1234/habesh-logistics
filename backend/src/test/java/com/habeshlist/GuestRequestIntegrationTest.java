@@ -53,6 +53,7 @@ class GuestRequestIntegrationTest {
     private String admin() throws Exception { return login("admin@habeshlist.com", "Admin@123"); }
     private String sender() throws Exception { return login("sender@example.com", "Sender@123"); }
     private String traveler() throws Exception { return login("traveler@example.com", "Traveler@123"); }
+    private String agent() throws Exception { return login("agent@example.com", "Agent@123"); }
     private JsonNode link(String admin) throws Exception {
         return ok("POST", adminBase, admin, Map.of("label", "Private sender " + route));
     }
@@ -163,7 +164,7 @@ class GuestRequestIntegrationTest {
 
     @Test
     void conversionReleasesMarketplaceCapacityRefundsDemoAndTransfersSelectedCarrier() throws Exception {
-        String a = admin(), t = traveler();
+        String a = admin(), t = agent();
         JsonNode guest = guestRequest(a);
         String requestPath = "/api/marketplace/requests/" + guest.path("id").asText();
         JsonNode trip = ok("POST", "/api/marketplace/trips", t, Map.of("origin", route, "destination", "Addis Ababa",
@@ -173,7 +174,7 @@ class GuestRequestIntegrationTest {
         ok("POST", requestPath + "/offers/" + offer.path("id").asText() + "/accept", a, null);
         ok("POST", requestPath + "/demo-escrow", a, null);
         JsonNode shipment = ok("POST", convertPath(guest), a, conversionInput());
-        assertEquals(offer.path("traveler").path("id"), shipment.path("assignedTravelerId"));
+        assertEquals(offer.path("traveler").path("id"), shipment.path("assignedAgentId"));
         assertTrue(shipment.path("tripId").isNull());
         assertEquals("PENDING", shipment.path("paymentStatus").asText());
         entityManager.flush();
@@ -295,6 +296,12 @@ class GuestRequestIntegrationTest {
         assertTrue(request.path("senderId").isTextual());
         assertEquals(email, request.path("senderContact").path("email").asText());
         assertTrue(request.path("hasProductPhoto").asBoolean());
+        assertFalse(request.path("adminApproved").asBoolean());
+        assertFalse(ok("GET", "/api/public/requests", null, null).toString().contains(request.path("id").asText()));
+        call("GET", "/api/marketplace/requests/" + request.path("id").asText(), t, null).andExpect(status().isForbidden());
+        mvc.perform(put("/api/marketplace/requests/" + request.path("id").asText() + "/approval")
+                .header("Authorization", "Bearer " + a).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"approved\":true}")).andExpect(status().isOk());
         JsonNode publicView = ok("GET", "/api/public/requests", null, null).findParents("id").stream()
                 .filter(row -> row.path("id").equals(request.path("id"))).findFirst().orElseThrow();
         assertFalse(publicView.toString().contains(email));
@@ -457,10 +464,10 @@ class GuestRequestIntegrationTest {
         call("GET", "/api/marketplace/requests/" + other.path("id").asText(), session, null).andExpect(status().isForbidden());
         call("GET", path + "/matches", session, null).andExpect(status().isForbidden());
         call("GET", path + "/messages", session, null).andExpect(status().isForbidden());
-        JsonNode trip = ok("POST", "/api/marketplace/trips", traveler(), Map.of("origin", route, "destination", "Addis Ababa",
+        JsonNode trip = ok("POST", "/api/marketplace/trips", agent(), Map.of("origin", route, "destination", "Addis Ababa",
                 "departureDate", LocalDate.now().plusDays(2).toString(), "capacityKg", 10,
                 "allowedItems", List.of("DOCUMENTS"), "blockedItems", List.of()));
-        JsonNode offered = ok("POST", path + "/offers", traveler(),
+        JsonNode offered = ok("POST", path + "/offers", agent(),
                 Map.of("tripId", trip.path("id").asText(), "price", 25));
         String offerId = offered.path("offers").get(0).path("id").asText();
         for (String action : List.of("accept", "decline", "withdraw"))
@@ -518,7 +525,7 @@ class GuestRequestIntegrationTest {
 
     @Test
     void adminHandlesGuestOffersAndFundingButNotRegularSenderOffers() throws Exception {
-        String a = admin(), t = traveler(), s = sender();
+        String a = admin(), t = agent(), s = sender();
         JsonNode created = link(a);
         ok("POST", publicBase + "/submit", null, submission(created.path("token").asText()));
         JsonNode guest = requestFor(created, a);

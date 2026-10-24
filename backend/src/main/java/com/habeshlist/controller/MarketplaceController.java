@@ -16,6 +16,10 @@ public class MarketplaceController {
     @GetMapping("/requests") public List<RequestDto> requests() { return service.listRequests(); }
     @PostMapping("/requests") public RequestDto request(@Valid @RequestBody RequestInput input) { return service.createRequest(input); }
     @GetMapping("/requests/{id}") public RequestDto request(@PathVariable UUID id) { return service.getRequest(id); }
+    @PutMapping("/requests/{id}/approval")
+    public RequestDto approval(@PathVariable UUID id, @Valid @RequestBody ApprovalInput input) {
+        return service.setApproval(id, input.approved());
+    }
     @GetMapping("/requests/{id}/product-photo") public Map<String, String> photo(@PathVariable UUID id) {
         return Map.of("photoDataUrl", service.productPhoto(id));
     }

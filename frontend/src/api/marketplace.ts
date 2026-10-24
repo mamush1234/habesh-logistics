@@ -31,6 +31,7 @@ export interface MarketContact { name: string; email: string; phone: string | nu
 export interface MarketRequest extends MarketRequestInput {
   id: string; senderId: string | null; senderName: string | null; status: DeliveryStatus;
   guestRequest: boolean; hasProductPhoto: boolean;
+  adminApproved: boolean;
   convertedShipmentId: string | null; shipmentTrackingNumber: string | null;
   escrowStatus: 'NONE' | 'DEMO_HELD' | 'DEMO_RELEASED' | 'DEMO_REFUNDED';
   escrowAmount: number | null; acceptedOfferId: string | null; rating: number | null;
@@ -46,6 +47,8 @@ export interface DeliveryMessage {
 export interface PackageChatPage { messages: DeliveryMessage[]; nextBefore: number | null; writable: boolean }
 
 export const MarketplaceApi = {
+  setApproval: (id: string, approved: boolean) =>
+    api.put<MarketRequest>(`/api/marketplace/requests/${id}/approval`, { approved }).then(r => r.data),
   messages: (id: string, before: number | null) =>
     api.get<PackageChatPage>(`/api/marketplace/requests/${id}/messages`, { params: before == null ? {} : { before } }).then(r => r.data),
   sendMessage: (id: string, body: string) =>

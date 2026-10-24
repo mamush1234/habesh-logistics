@@ -6,9 +6,10 @@ import { AuthApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
 
 export function Account() {
-  const { user, logout } = useAuth();
+  const { user, logout, temporaryPassword } = useAuth();
   const navigate = useNavigate();
-  const [current, setCurrent] = useState('');
+  const [current, setCurrent] = useState(temporaryPassword ?? '');
+  const [showCurrent, setShowCurrent] = useState(false);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   return <form className="card max-w-lg mx-auto space-y-3" onSubmit={async e => {
@@ -26,9 +27,12 @@ export function Account() {
   }}>
     <h1 className="text-2xl font-bold">Change password</h1>
     {user?.mustChangePassword && <p role="note">You are using a temporary password. Set a different password before accessing your account. After changing it, sign in again with your new password.</p>}
+    {user?.mustChangePassword && temporaryPassword && <p role="status">Your package request was received. We will contact you once we find a traveler. You are signed in as {user.email}; your temporary password is already filled in below. Choose your own password now, before refreshing or leaving this page. The temporary password is not saved in browser storage.</p>}
     <label className="label" htmlFor="current-password">Current password</label>
-    <input id="current-password" className="input" type="password" autoComplete="current-password"
+    <input id="current-password" className="input" type={showCurrent ? 'text' : 'password'} autoComplete="current-password"
       required value={current} onChange={e => setCurrent(e.target.value)} />
+    <button type="button" className="btn btn-ghost" aria-controls="current-password" aria-pressed={showCurrent}
+      onClick={() => setShowCurrent(value => !value)}>{showCurrent ? 'Hide current password' : 'Show current password'}</button>
     <label className="label" htmlFor="new-password">New password (at least 12 characters)</label>
     <input id="new-password" className="input" type="password" autoComplete="new-password"
       required minLength={12} maxLength={72} value={password} onChange={e => setPassword(e.target.value)} />

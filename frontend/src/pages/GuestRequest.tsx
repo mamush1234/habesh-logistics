@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { GuestRequestsApi } from '../api/guestRequests';
+import { useAuth } from '../auth/AuthContext';
 import { initialRequestForm, MarketRequestFields } from '../components/MarketRequestFields';
 import { preparePackagePhoto } from '../util/packagePhoto';
 import { DemoNotice } from './Marketplace';
@@ -19,6 +20,23 @@ export function GuestRequest() {
 }
 
 function GuestRequestForm({ token }: { token: string }) {
+  const { loginWithTemporaryPassword } = useAuth();
+  const navigate = useNavigate();
+  const [signingIn, setSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState('');
+  async function signIn(email: string, temporaryPassword: string) {
+    setSigningIn(true);
+    setSignInError('');
+    try {
+      const user = await loginWithTemporaryPassword(email, temporaryPassword);
+      navigate(user.mustChangePassword ? '/account' : '/my-shipments', { replace: true });
+    } catch (error: unknown) {
+      const detail = isAxiosError<{ message?: string }>(error) ? error.response?.data?.message : undefined;
+      setSignInError(`Automatic sign-in failed. Your request was received. Save the credentials below and retry signing in; do not submit the request again.${detail ? ` ${detail}` : ''}`);
+    } finally {
+      setSigningIn(false);
+    }
+  }
   const validToken = /^[A-Za-z0-9_-]{43}$/.test(token);
   const check = useQuery({ queryKey: ['guest-request-status', token], queryFn: () => GuestRequestsApi.check(token),
     enabled: validToken, retry: false, gcTime: 0, refetchOnWindowFocus: false });
@@ -32,7 +50,10 @@ function GuestRequestForm({ token }: { token: string }) {
     gcTime: 0,
     mutationFn: () => GuestRequestsApi.submit({ token, ...contact, photoDataUrl: photo,
       request: { ...form, weightKg: Number(form.weightKg), offeredPrice: Number(form.offeredPrice) } }),
-    onSuccess: () => { setContact({ name: '', email: '', phone: '' }); setPhoto(''); setForm(initialRequestForm()); },
+    onSuccess: async result => {
+      setContact({ name: '', email: '', phone: '' }); setPhoto(''); setForm(initialRequestForm());
+      if (result.credentials) await signIn(result.credentials.email, result.credentials.temporaryPassword);
+    },
   });
   if (!validToken) return <p role="alert">This private link is incomplete. Please ask us for a new guest request link.</p>;
   if (check.isPending) return <p role="status">Checking your private link...</p>;
@@ -45,19 +66,25 @@ function GuestRequestForm({ token }: { token: string }) {
     {result.status === 'SUBMITTED' && <>
       <p>Our team will use the email or phone number you provided to coordinate with you. Your request remains admin-managed.</p>
       <p>{mutation.data?.accountMessage ?? 'If a sender account was created, sign in with the credentials you saved after submission. Temporary passwords cannot be shown again; contact our team if you need help.'}</p>
+      {signingIn && <p role="status">Your request was received. Signing you in to choose your password...</p>}
+      {signInError && <p role="alert" className="text-red-700">{signInError}</p>}
       {mutation.data?.credentials && <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-3">
         <h2 className="text-xl font-bold">Save your new sender login</h2>
         <p>These credentials are shown only once. Save them before leaving or refreshing this page. You must change the temporary password at first login.</p>
         <label className="label">Login email<input className="input" readOnly value={mutation.data.credentials.email} onFocus={e => e.currentTarget.select()} /></label>
         <label className="label">Temporary password<input className="input font-mono" readOnly autoComplete="off" value={mutation.data.credentials.temporaryPassword} onFocus={e => e.currentTarget.select()} /></label>
+        <button className="btn btn-brand" disabled={signingIn} onClick={() => {
+          const credentials = mutation.data?.credentials;
+          if (credentials) void signIn(credentials.email, credentials.temporaryPassword);
+        }}>{signingIn ? 'Signing in...' : 'Sign in and change password'}</button>
       </div>}
       <Link className="btn btn-brand" to="/login">Sign in</Link>
     </>}
   </section>;
   return <div className="max-w-2xl mx-auto space-y-5">
     <h1 className="text-3xl font-bold">Send a package as a guest</h1>
-    <p>No sign-in is required to submit. Email and phone are mandatory. For a new email, we create a sender account and show a unique temporary password once after submission. Existing accounts are not changed. Add a clear product photo. We will contact you once we find a traveler.</p>
-    <p className="text-sm">Keep this link private. It expires seven days after creation and can be used for one request. Your contact details are visible to administrators and, for a newly created account, to you after login. Open request previews show your route, product photo, dates, item type, weight, and price to visitors; reviewing details and making offers requires login. Do not put names, phone numbers, addresses, or email in the description or photo.</p>
+    <p>No sign-in is required to submit. Email and phone are mandatory. For a new email, we create a sender account, sign you in automatically, and ask you to choose your own password. Your temporary password is filled in for you without saving it in browser storage. Existing accounts are not changed or automatically signed in. Add a clear product photo. We will contact you once we find a traveler.</p>
+    <p className="text-sm">Keep this link private. It expires seven days after creation and can be used for one request. Your contact details are visible to administrators and, for a newly created account, to you after login. After admin approval, open request previews show your route, product photo, dates, item type, weight, and price to visitors. Travelers can view approved requests only; agents can make offers after login. Do not put names, phone numbers, addresses, or email in the description or photo.</p>
     <DemoNotice />
     <form className="card grid sm:grid-cols-2 gap-4" onSubmit={e => {
       e.preventDefault();

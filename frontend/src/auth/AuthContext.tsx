@@ -9,6 +9,8 @@ interface AuthState {
   user: User | null;
   initializing: boolean;
   login: (email: string, password: string) => Promise<User>;
+  loginWithTemporaryPassword: (email: string, password: string) => Promise<User>;
+  temporaryPassword: string | null;
   register: (data: RegisterRequest) => Promise<User>;
   logout: () => void;
 }
@@ -19,12 +21,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
   const [initializing, setInitializing] = useState(true);
+  const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
 
   const logout = useCallback(() => {
     sessionStorage.removeItem('habesh.token');
     localStorage.removeItem('habesh.token');
     localStorage.removeItem('habesh.user');
     qc.clear();
+    setTemporaryPassword(null);
     setUser(null);
   }, [qc]);
 
@@ -50,20 +54,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, [logout]);
 
-  const authenticate = useCallback((response: AuthResponse) => {
+  const authenticate = useCallback((response: AuthResponse, password?: string) => {
     qc.clear();
     sessionStorage.setItem('habesh.token', response.token);
+    setTemporaryPassword(response.user.mustChangePassword ? password ?? null : null);
     setUser(response.user);
     return response.user;
   }, [qc]);
 
   const login = useCallback(async (email: string, password: string) =>
     authenticate(await AuthApi.login(email, password)), [authenticate]);
+  const loginWithTemporaryPassword = useCallback(async (email: string, password: string) =>
+    authenticate(await AuthApi.login(email, password), password), [authenticate]);
   const register = useCallback(async (data: RegisterRequest) =>
     authenticate(await AuthApi.register(data)), [authenticate]);
 
-  const value = useMemo(() => ({ user, initializing, login, register, logout }),
-    [user, initializing, login, register, logout]);
+  const value = useMemo(() => ({ user, initializing, login, loginWithTemporaryPassword, temporaryPassword, register, logout }),
+    [user, initializing, login, loginWithTemporaryPassword, temporaryPassword, register, logout]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
