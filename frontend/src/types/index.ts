@@ -34,6 +34,12 @@ export interface PublicTravel {
   departureDate: string;
   availableCapacityKg: number;
   createdAt: string;
+  expectedArrivalDate: string | null;
+  rating: number | null;
+  ratingCount: number;
+  verification: import('../api/marketplace').VerificationLevel;
+  allowedItems: import('../api/marketplace').ItemType[];
+  itemPrices: import('../api/marketplace').TripItemPrice[];
 }
 
 export interface Recipient {

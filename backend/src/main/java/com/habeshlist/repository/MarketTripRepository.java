@@ -10,4 +10,6 @@ public interface MarketTripRepository extends JpaRepository<MarketTrip, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select t from MarketTrip t where t.id = :id")
     Optional<MarketTrip> findForUpdate(UUID id);
+    long countByTravelerId(UUID travelerId);
+    List<MarketTrip> findByCreatedByAgentIdOrderByCreatedAtDesc(UUID agentId);
 }

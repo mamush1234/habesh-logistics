@@ -26,6 +26,13 @@ public final class ApiDtos {
     public record PublicTravelDto(UUID id, String origin, String destination, LocalDate departureDate,
                                    BigDecimal availableCapacityKg, Instant createdAt) {}
 
+    public record PublicMarketplaceTripDto(UUID id, String origin, String destination, LocalDate departureDate,
+                                   BigDecimal availableCapacityKg, Instant createdAt, LocalDate expectedArrivalDate,
+                                   Double rating, long ratingCount,
+                                   com.habeshlist.entity.enums.MarketplaceTypes.VerificationLevel verification,
+                                   java.util.Set<com.habeshlist.entity.enums.MarketplaceTypes.ItemType> allowedItems,
+                                   java.util.List<MarketplaceDtos.TripItemPriceDto> itemPrices) {}
+
     public record PublicRequestDto(UUID id, String pickupCity, String destinationCity, LocalDate availableFrom,
             LocalDate deadline, com.habeshlist.entity.enums.MarketplaceTypes.ItemType itemType,
             BigDecimal weightKg, BigDecimal offeredPrice, boolean hasProductPhoto, Instant createdAt) {}

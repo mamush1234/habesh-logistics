@@ -1,6 +1,7 @@
 import { api } from './client';
 import { z } from 'zod';
 import { itemTypes } from './marketplace';
+import type { MarketRequestInput, MarketTripInput } from './marketplace';
 import type {
   AuthResponse, Shipment, PublicTracking, TrackingEvent,
   Trip, Luggage, AdminStats, ReferralStats, PublicInfo, PublicTravel, User, RegisterRequest,
@@ -12,15 +13,26 @@ export const AuthApi = {
     api.post<AuthResponse>('/api/auth/login', { email, password }).then(r => r.data),
   register: (data: RegisterRequest) =>
     api.post<AuthResponse>('/api/auth/register', data).then(r => r.data),
+  registerSender: (data: Omit<RegisterRequest, 'role'> & { packageDetails: MarketRequestInput }) =>
+    api.post<{ auth: AuthResponse; requestId: string }>('/api/auth/register/sender', data).then(r => r.data),
+  registerTraveler: (data: Omit<RegisterRequest, 'role'> & { tripDetails: MarketTripInput; termsAccepted: boolean }) =>
+    api.post<{ auth: AuthResponse; tripId: string }>('/api/auth/register/traveler', data).then(r => r.data),
   me: () => api.get<User>('/api/me').then(r => r.data),
   changePassword: (currentPassword: string, newPassword: string) =>
     api.put('/api/me/password', { currentPassword, newPassword }).then(r => r.data),
 };
 
-const publicTravelSchema = z.array(z.object({
+const publicTripSchema = z.object({
   id: z.string().uuid(), origin: z.string(), destination: z.string(),
   departureDate: z.string(), availableCapacityKg: z.number().positive(), createdAt: z.string().datetime(),
-}));
+  expectedArrivalDate: z.string().nullable(),
+  rating: z.number().min(1).max(5).nullable(), ratingCount: z.number().int().nonnegative(),
+  verification: z.enum(['UNVERIFIED', 'ID_VERIFIED', 'FULLY_VERIFIED']),
+  allowedItems: z.array(z.enum(itemTypes)),
+  itemPrices: z.array(z.object({ category: z.enum(itemTypes), price: z.number().positive(),
+    unit: z.enum(['PER_KG', 'PER_ITEM']) })),
+});
+const publicTravelSchema = z.array(publicTripSchema);
 const publicRequestsSchema = z.array(z.object({
   id: z.string().uuid(), pickupCity: z.string(), destinationCity: z.string(),
   availableFrom: z.string(), deadline: z.string(), itemType: z.enum(itemTypes),
@@ -34,6 +46,8 @@ export const PublicApi = {
     .then(r => r.data.photoDataUrl),
   travel: (): Promise<PublicTravel[]> => api.get<unknown>('/api/public/travel')
     .then(r => publicTravelSchema.parse(r.data)),
+  trip: (id: string): Promise<PublicTravel> => api.get<unknown>(`/api/public/travel/${encodeURIComponent(id)}`)
+    .then(r => publicTripSchema.parse(r.data)),
   info: () => api.get<PublicInfo>('/api/public/info').then(r => r.data),
   track: (tn: string) => api.get<PublicTracking>(`/api/shipments/tracking/${encodeURIComponent(tn)}`).then(r => r.data),
 };

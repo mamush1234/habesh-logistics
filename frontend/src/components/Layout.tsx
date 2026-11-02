@@ -9,10 +9,12 @@ const navItems = [
   { to: '/', label: 'Home', public: true },
   { to: '/send', label: 'Send Package', public: true },
   { to: '/my-shipments', label: 'My packages', roles: ['SENDER'] },
+  { to: '/my-reviews', label: 'My reviews', roles: ['SENDER', 'TRAVELER', 'AGENT'] },
   { to: '/track', label: 'Track', public: true },
   { to: '/account', label: 'Account', public: true },
   { to: '/traveler', label: 'My trips', roles: ['TRAVELER', 'AGENT', 'ADMIN'] },
-  { to: '/agent', label: 'Agent', roles: ['AGENT', 'ADMIN'] },
+  { to: '/agent', label: 'Agent Portal', roles: ['AGENT'] },
+  { to: '/agent/legacy', label: 'Agent', roles: ['ADMIN'] },
   { to: '/marketplace', label: 'Marketplace', roles: ['SENDER', 'AGENT', 'TRAVELER', 'ADMIN'] },
   { to: '/admin', label: 'Admin', roles: ['ADMIN'] },
 ];
@@ -33,7 +35,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <header className={`sticky top-0 z-20 backdrop-blur-md ${landing ? 'landing-header' : 'bg-white/90 border-b border-ink-300/60'}`}>
         <div className="header-inner max-w-7xl mx-auto px-3 sm:px-4 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2" data-testid="brand-link">
-            {landing ? <div className="landing-brand">Habesh<span>Logistics</span></div> : <><div className="brand-mark">
+            {landing ? <div className="landing-brand"><Plane aria-hidden="true" /><span>HabeshaList <strong>Travel</strong></span></div> : <><div className="brand-mark">
               <Luggage className="w-9 h-9" />
               <Plane className="brand-plane" />
             </div>
@@ -45,9 +47,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
           <nav className={`hidden xl:flex items-center gap-1 ${landing && !user ? 'ml-auto mr-5' : ''}`} data-testid="main-nav">
             {!user && <>
-              <a href="/#trips" className="landing-nav-link">Trips</a>
+              <a href="/" className="landing-nav-link">Home</a>
               <a href="/#how-it-works" className="landing-nav-link">How It Works</a>
               <a href="/#safety" className="landing-nav-link">Safety</a>
+              <a href="/#faq" className="landing-nav-link">FAQs</a>
             </>}
             {visible.map(item => (
               <NavLink key={item.to} to={item.to}
@@ -75,7 +78,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             ) : (
               <>
                 <Link to="/login" className={landing ? 'landing-login whitespace-nowrap' : 'btn btn-ghost !hidden sm:!inline-flex !text-blue-700 whitespace-nowrap'} data-testid="login-link">Log in</Link>
-                {!landing && <Link to="/register" className="btn bg-blue-600 text-white hover:bg-blue-700 !px-3 sm:!px-4 whitespace-nowrap" data-testid="signup-link">Sign up</Link>}
+                <Link to="/register" className={landing ? 'landing-signup whitespace-nowrap' : 'btn bg-blue-600 text-white hover:bg-blue-700 !px-3 sm:!px-4 whitespace-nowrap'} data-testid="signup-link">Sign up</Link>
               </>
             )}
             <button className="xl:hidden btn btn-ghost !px-2" aria-label={open ? 'Close navigation' : 'Open navigation'}
@@ -87,8 +90,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {open && (
           <div className="xl:hidden border-t border-ink-300/60 bg-white">
             <div className="max-w-7xl mx-auto px-4 py-2 flex flex-col">
-              {!user && ['Trips', 'How It Works', 'Safety'].map((label, index) => (
-                <a key={label} href={`/#${['trips', 'how-it-works', 'safety'][index]}`}
+              {!user && ['Home', 'Trips', 'How It Works', 'Safety', 'FAQs'].map((label, index) => (
+                <a key={label} href={['/', '/#trips', '/#how-it-works', '/#safety', '/#faq'][index]}
                   className="py-2 px-3 rounded-lg text-blue-950" onClick={() => setOpen(false)}>{label}</a>
               ))}
               {!user && !landing && <Link to="/login" className="sm:hidden py-2 px-3 rounded-lg text-blue-950" onClick={() => setOpen(false)}>Log in</Link>}

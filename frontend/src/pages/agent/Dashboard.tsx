@@ -45,7 +45,7 @@ export function AgentDashboard() {
       <h1 className="text-3xl font-bold">Agent dashboard</h1>
       <div className="card space-y-3">
         <h2 className="text-xl font-semibold">Package offers and chat</h2>
-        <p>Post a delivery trip and send offers for matching sender requests. Once your offer is accepted, open the package to chat with its sender.</p>
+        <p>Post a delivery trip and send offers for matching sender requests. Once your offer is accepted and payment is confirmed, open the package's booking workspace to chat with its sender.</p>
         <div className="flex flex-wrap gap-2">
           <Link to="/traveler" className="btn btn-brand">My delivery trips</Link>
           <Link to="/marketplace" className="btn btn-ghost">Sender requests and deliveries</Link>

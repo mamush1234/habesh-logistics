@@ -15,7 +15,9 @@ public class DeliveryRequest {
     @Id @GeneratedValue private UUID id;
     @ManyToOne(fetch = FetchType.LAZY) private User sender;
     @ManyToOne(fetch = FetchType.LAZY) private User guestAccount;
+    @ManyToOne(fetch = FetchType.LAZY) private User createdByAgent;
     @Column(nullable = false) private boolean adminApproved;
+    @Column(nullable = false) @Builder.Default private boolean deliveryCodeRequired = true;
     @Column(length = 120) private String guestName;
     @Column(length = 254) private String guestEmail;
     @Column(length = 40) private String guestPhone;
@@ -29,6 +31,11 @@ public class DeliveryRequest {
     @Column(nullable = false, length = 1000) private String description;
     @Column(nullable = false, precision = 10, scale = 2) private BigDecimal weightKg;
     @Column(nullable = false, precision = 10, scale = 2) private BigDecimal offeredPrice;
+    @OneToMany(mappedBy = "request", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderColumn(name = "item_position") @Builder.Default
+    private List<PackageItem> items = new ArrayList<>();
+    @ManyToOne(fetch = FetchType.LAZY, cascade = CascadeType.PERSIST)
+    @JoinColumn(name = "receiver_id") private Recipient receiver;
     @Enumerated(EnumType.STRING) @Column(nullable = false) private DeliveryStatus status;
     @OneToOne(fetch = FetchType.LAZY) private DeliveryOffer acceptedOffer;
     @Enumerated(EnumType.STRING) @Column(nullable = false) @Builder.Default

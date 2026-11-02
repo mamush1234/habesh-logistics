@@ -25,11 +25,19 @@ public class MarketplaceService {
     private final UserRepository users;
     private final TravelerProfileRepository profiles;
     private final PackageNotificationService notifications;
+    private final com.habeshlist.agent.AgentCommissionService agentCommissions;
     private final Clock clock;
+    private final ShipmentRequestRepository shipmentRequests;
+    private final com.habeshlist.payment.StripePayments stripePayments;
+    private final com.habeshlist.review.ReviewService reviews;
+    private final com.habeshlist.confirmation.DeliveryConfirmationRepository confirmations;
 
     public MarketplaceService(MarketTripRepository trips, DeliveryRequestRepository requests,
             DeliveryOfferRepository offers, DeliveryEventRepository events, UserRepository users,
-            TravelerProfileRepository profiles, PackageNotificationService notifications, Clock clock) {
+            TravelerProfileRepository profiles, PackageNotificationService notifications,
+            com.habeshlist.agent.AgentCommissionService agentCommissions, Clock clock, ShipmentRequestRepository shipmentRequests,
+            com.habeshlist.payment.StripePayments stripePayments, com.habeshlist.review.ReviewService reviews,
+            com.habeshlist.confirmation.DeliveryConfirmationRepository confirmations) {
         this.trips = trips;
         this.requests = requests;
         this.offers = offers;
@@ -37,7 +45,12 @@ public class MarketplaceService {
         this.users = users;
         this.profiles = profiles;
         this.notifications = notifications;
+        this.agentCommissions = agentCommissions;
         this.clock = clock;
+        this.shipmentRequests = shipmentRequests;
+        this.stripePayments = stripePayments;
+        this.reviews = reviews;
+        this.confirmations = confirmations;
     }
 
     private User actor() {
@@ -86,6 +99,12 @@ public class MarketplaceService {
     public TripDto createTrip(TripInput input) {
         User traveler = actor();
         permit(offeringRole());
+        return tripDto(postTravelerTrip(traveler, input));
+    }
+
+    MarketTrip postTravelerTrip(User traveler, TripInput input) {
+        require(traveler.getRole() == Role.TRAVELER || traveler.getRole() == Role.AGENT,
+                "Only travelers and agents can post a trip");
         require(!input.departureDate().isBefore(today()), "Departure date must not be in the past");
         require(input.expectedArrivalDate() == null || !input.expectedArrivalDate().isBefore(input.departureDate()),
                 "Arrival date cannot be before departure");
@@ -95,26 +114,54 @@ public class MarketplaceService {
                 .expectedArrivalDate(input.expectedArrivalDate()).capacityKg(input.capacityKg())
                 .allowedItems(new HashSet<>(input.allowedItems())).blockedItems(new HashSet<>(input.blockedItems()))
                 .createdAt(clock.instant()).build();
-        return tripDto(trips.save(trip));
+        TripDetails.apply(trip, input);
+        return trips.save(trip);
     }
 
     @Transactional(readOnly = true)
     public List<TripDto> listTrips() {
         return trips.findAllByOrderByDepartureDateAscCreatedAtAsc().stream()
-                .filter(t -> admin() || t.getTraveler().getId().equals(actorId())
-                        || (!offeringRole()
-                            && !t.getDepartureDate().isBefore(today()) && t.getTraveler().isActive()))
+                .filter(this::canViewTrip)
                 .map(this::tripDto).toList();
     }
 
+    private boolean canViewTrip(MarketTrip t) {
+        return admin() || t.getTraveler().getId().equals(actorId())
+                || (!offeringRole() && !t.getDepartureDate().isBefore(today()) && t.getTraveler().isActive());
+    }
+
     @Transactional(readOnly = true)
-    public List<ApiDtos.PublicTravelDto> publicTrips() {
+    public TripDto getTrip(UUID id) {
+        MarketTrip t = trips.findById(id).orElseThrow(() -> new NotFoundException("Trip not found"));
+        permit(canViewTrip(t));
+        return tripDto(t);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ApiDtos.PublicMarketplaceTripDto> publicTrips() {
         return trips.findAllByOrderByDepartureDateAscCreatedAtAsc().stream()
-                .filter(t -> !t.getDepartureDate().isBefore(today()) && t.getTraveler().isActive()
-                        && available(t).signum() > 0)
+                .filter(this::publiclyAvailable)
                 .sorted(Comparator.comparing(MarketTrip::getCreatedAt).reversed().thenComparing(MarketTrip::getId))
-                .map(t -> new ApiDtos.PublicTravelDto(t.getId(), t.getOrigin(), t.getDestination(),
-                        t.getDepartureDate(), available(t), t.getCreatedAt())).toList();
+                .map(this::publicTripDto).toList();
+    }
+
+    private boolean publiclyAvailable(MarketTrip t) {
+        return !t.getDepartureDate().isBefore(today()) && t.getTraveler().isActive() && available(t).signum() > 0;
+    }
+
+    private ApiDtos.PublicMarketplaceTripDto publicTripDto(MarketTrip t) {
+        TravelerDto reputation = traveler(t.getTraveler(), false);
+        return new ApiDtos.PublicMarketplaceTripDto(t.getId(), t.getOrigin(), t.getDestination(),
+                t.getDepartureDate(), available(t), t.getCreatedAt(), t.getExpectedArrivalDate(),
+                reputation.rating(), reputation.ratingCount(), reputation.verification(),
+                Set.copyOf(t.getAllowedItems()), TripDetails.prices(t));
+    }
+
+    @Transactional(readOnly = true)
+    public ApiDtos.PublicMarketplaceTripDto publicTrip(UUID id) {
+        MarketTrip t = trips.findById(id).orElseThrow(() -> new NotFoundException("Trip not found"));
+        if (!publiclyAvailable(t)) throw new NotFoundException("Trip not found");
+        return publicTripDto(t);
     }
 
     private boolean publiclyAvailable(DeliveryRequest r) {
@@ -141,16 +188,24 @@ public class MarketplaceService {
     public RequestDto createRequest(RequestInput input) {
         User sender = actor();
         permit(sender.getRole() == Role.SENDER);
+        return requestDto(postSenderRequest(sender, input));
+    }
+
+    DeliveryRequest postSenderRequest(User sender, RequestInput input) {
+        require(sender.getRole() == Role.SENDER, "Only senders can post a delivery request");
         require(!input.availableFrom().isBefore(today()) && !input.deadline().isBefore(input.availableFrom()),
                 "Choose an available date today or later and a deadline on or after that date");
-        DeliveryRequest r = requests.save(DeliveryRequest.builder().sender(sender).pickupCity(input.pickupCity().trim())
+        DeliveryRequest r = DeliveryRequest.builder().sender(sender).pickupCity(input.pickupCity().trim())
                 .destinationCity(input.destinationCity().trim()).availableFrom(input.availableFrom()).deadline(input.deadline())
                 .itemType(input.itemType()).description(input.description().trim()).weightKg(input.weightKg())
                 .offeredPrice(input.offeredPrice()).status(DeliveryStatus.REQUESTED)
-                .createdAt(clock.instant()).updatedAt(clock.instant()).build());
-        record(r, "Delivery request posted");
+                .createdAt(clock.instant()).updatedAt(clock.instant()).build();
+        PackageDetails.apply(r, input);
+        requests.save(r);
+        events.save(DeliveryEvent.builder().request(r).status(r.getStatus()).actorId(sender.getId())
+                .description("Delivery request posted").createdAt(clock.instant()).sequenceNumber(0).build());
         notifications.broadcastRequest(r);
-        return requestDto(r);
+        return r;
     }
 
     @Transactional(readOnly = true)
@@ -168,6 +223,7 @@ public class MarketplaceService {
     public RequestDto setApproval(UUID id, boolean approved) {
         permit(admin());
         DeliveryRequest r = lockRequest(id);
+        require(!approved || r.getStatus() != DeliveryStatus.DRAFT, "Draft requests must be submitted before approval");
         if (r.isAdminApproved() != approved) {
             r.setAdminApproved(approved);
             record(r, approved ? "Admin approved request for read-only traveler visibility"
@@ -216,11 +272,13 @@ public class MarketplaceService {
             reasons.add("Trip arrives " + arrival + " after the delivery deadline " + r.getDeadline());
         if (available(t).compareTo(r.getWeightKg()) < 0)
             reasons.add("Trip has " + available(t).toPlainString() + " kg available but the package requires " + r.getWeightKg().toPlainString() + " kg");
-        if (!t.getAllowedItems().contains(r.getItemType()) || t.getBlockedItems().contains(r.getItemType()))
-            reasons.add("Trip does not allow item type " + r.getItemType());
+        for (ItemType category : PackageDetails.categories(r)) {
+            if (!t.getAllowedItems().contains(category) || t.getBlockedItems().contains(category))
+                reasons.add("Trip does not allow item type " + category);
+        }
         return reasons;
     }
-    private void requireCompatible(DeliveryRequest r, MarketTrip t) {
+    void requireCompatible(DeliveryRequest r, MarketTrip t) {
         List<String> reasons = incompatibilities(r, t);
         require(reasons.isEmpty(), String.join("; ", reasons));
     }
@@ -245,7 +303,8 @@ public class MarketplaceService {
     private TripDto tripDto(MarketTrip t) {
         return new TripDto(t.getId(), traveler(t.getTraveler()), t.getOrigin(), t.getDestination(), t.getDepartureDate(),
                 t.getExpectedArrivalDate(), t.getCapacityKg(), available(t),
-                Set.copyOf(t.getAllowedItems()), Set.copyOf(t.getBlockedItems()), t.getCreatedAt());
+                Set.copyOf(t.getAllowedItems()), Set.copyOf(t.getBlockedItems()), t.getCreatedAt(),
+                t.getHandoffLocation(), t.getNotes(), TripDetails.prices(t));
     }
 
     @Transactional(readOnly = true)
@@ -330,7 +389,7 @@ public class MarketplaceService {
                 notifications.notifyRequest(r, other.getTraveler(), other.getId().equals(offerId)
                         ? r.getSender() == null
                             ? "Your offer for a guest request was accepted. Contact an admin to coordinate pickup."
-                            : "Your offer was accepted. Package chat is open; waiting for demo escrow funding."
+                            : "Your offer was accepted. Package chat opens after demo escrow funding."
                         : "The sender selected another offer for this request.");
             }
         }
@@ -353,6 +412,25 @@ public class MarketplaceService {
         return requestDto(r);
     }
 
+    DeliveryOffer acceptTargetedRequest(DeliveryRequest r, MarketTrip trip, BigDecimal price) {
+        requireCompatible(r, trip);
+        DeliveryOffer selected = offers.findByRequestIdAndTravelerId(r.getId(), trip.getTraveler().getId())
+                .orElseGet(() -> DeliveryOffer.builder().request(r).traveler(trip.getTraveler()).build());
+        selected.setTrip(trip);
+        selected.setPrice(price);
+        selected.setMessage("Accepted targeted shipment request");
+        selected.setStatus(OfferStatus.ACCEPTED);
+        selected.setCreatedAt(clock.instant());
+        offers.saveAndFlush(selected);
+        offers.findByRequestIdOrderByCreatedAtAsc(r.getId()).stream()
+                .filter(o -> o.getStatus() == OfferStatus.PENDING).forEach(o -> o.setStatus(OfferStatus.DECLINED));
+        trip.setReservedKg(trip.getReservedKg().add(r.getWeightKg()));
+        r.setAcceptedOffer(selected);
+        r.setStatus(DeliveryStatus.MATCHED);
+        record(r, "Targeted shipment request accepted; trip weight reserved. Stripe test payment available; no real funds.");
+        return selected;
+    }
+
     @Transactional
     public RequestDto fundDemoEscrow(UUID id) {
         permit(SecurityUtils.currentUser().role() != Role.TRAVELER);
@@ -360,6 +438,8 @@ public class MarketplaceService {
         permit(managesSender(r));
         require(r.getStatus() == DeliveryStatus.MATCHED && r.getEscrowStatus() == EscrowStatus.NONE,
                 "Demo escrow can only be funded once after matching");
+        require(!shipmentRequests.existsByAcceptedOfferId(r.getAcceptedOffer().getId()),
+                "Targeted shipment requests require Stripe test payment; demo funding is not available");
         r.setEscrowAmount(r.getAcceptedOffer().getPrice());
         r.setEscrowStatus(EscrowStatus.DEMO_HELD);
         r.setStatus(DeliveryStatus.PAID_ESCROW);
@@ -382,48 +462,80 @@ public class MarketplaceService {
                     "An admin must resolve the dispute with COMPLETED or CANCELLED and a reason");
         } else {
             switch (to) {
-                case PICKED_UP -> { permit(carrier(r) || admin()); require(from == DeliveryStatus.PAID_ESCROW, "Fund demo escrow before pickup"); }
+                case PICKED_UP -> { permit(carrier(r) || admin()); require(from == DeliveryStatus.PAID_ESCROW, "Confirm payment before pickup"); }
                 case IN_TRANSIT -> { permit(carrier(r) || admin()); require(from == DeliveryStatus.PICKED_UP, "Pick up the parcel first"); }
-                case DELIVERED -> { permit(carrier(r) || admin()); require(from == DeliveryStatus.IN_TRANSIT, "The parcel must be in transit first"); }
-                case COMPLETED -> { permit(sender(r) || admin()); require(from == DeliveryStatus.DELIVERED, "Confirm delivery before completion"); }
+                case ARRIVED -> { permit(carrier(r) || admin()); require(from == DeliveryStatus.IN_TRANSIT, "The parcel must be in transit before arrival"); }
+                case DELIVERED -> {
+                    permit(carrier(r) || admin());
+                    require(from == DeliveryStatus.ARRIVED, "Record arrival before delivery");
+                    require(r.getSender() == null || !r.isDeliveryCodeRequired(), "Use the receiver delivery code to confirm this booking");
+                }
+                case COMPLETED -> {
+                    permit(sender(r) || admin());
+                    require(from == DeliveryStatus.DELIVERED, "Confirm delivery before completion");
+                    require(r.getSender() == null || !r.isDeliveryCodeRequired()
+                            || confirmations.findById(id).filter(c -> c.getConfirmedAt() != null).isPresent(),
+                            "Use the receiver delivery code to complete this booking");
+                }
                 case CANCELLED -> require(from == DeliveryStatus.REQUESTED || from == DeliveryStatus.MATCHED
                         || from == DeliveryStatus.PAID_ESCROW, "Cancellation is only available before pickup; open a dispute instead");
                 case DISPUTED -> require((from == DeliveryStatus.PAID_ESCROW || from == DeliveryStatus.PICKED_UP
-                        || from == DeliveryStatus.IN_TRANSIT || from == DeliveryStatus.DELIVERED)
+                        || from == DeliveryStatus.IN_TRANSIT || from == DeliveryStatus.ARRIVED || from == DeliveryStatus.DELIVERED)
                         && input.reason() != null && !input.reason().isBlank(), "A funded, unfinished delivery and a reason are required");
                 default -> throw new BadRequestException("Use offer acceptance or demo escrow funding for this transition");
             }
         }
+        boolean stripeTest = r.getEscrowStatus() == EscrowStatus.STRIPE_TEST_HELD;
+        closeEscrow(r, to);
+        if (to == DeliveryStatus.DISPUTED) r.setDisputeReason(input.reason().trim());
+        r.setStatus(to);
+        if (to == DeliveryStatus.COMPLETED && !stripeTest) agentCommissions.recordCompletedDelivery(r);
+        record(r, input.reason() == null || input.reason().isBlank() ? "Delivery moved to " + to : input.reason().trim());
+        notifyParticipants(r, "Delivery status changed to " + to + ". Test/demo only; no real funds or payouts.");
+        return requestDto(r);
+    }
+
+    private void closeEscrow(DeliveryRequest r, DeliveryStatus to) {
+        boolean stripeTest = r.getEscrowStatus() == EscrowStatus.STRIPE_TEST_HELD;
         if (to == DeliveryStatus.COMPLETED || to == DeliveryStatus.CANCELLED) {
             if (to == DeliveryStatus.COMPLETED) {
-                require(r.getEscrowStatus() == EscrowStatus.DEMO_HELD, "Demo escrow is not held");
-                r.setEscrowStatus(EscrowStatus.DEMO_RELEASED);
+                require(r.getEscrowStatus() == EscrowStatus.DEMO_HELD || stripeTest, "Payment is not confirmed");
+                r.setEscrowStatus(stripeTest ? EscrowStatus.STRIPE_TEST_RELEASED : EscrowStatus.DEMO_RELEASED);
             } else {
+                stripePayments.cancelFor(r);
                 if (r.getEscrowStatus() == EscrowStatus.DEMO_HELD) r.setEscrowStatus(EscrowStatus.DEMO_REFUNDED);
                 if (r.getAcceptedOffer() != null) {
                     MarketTrip trip = lockTrip(r.getAcceptedOffer().getTrip().getId());
                     trip.setReservedKg(trip.getReservedKg().subtract(r.getWeightKg()));
                 }
-                offers.findByRequestIdOrderByCreatedAtAsc(id).stream().filter(o -> o.getStatus() == OfferStatus.PENDING)
+                offers.findByRequestIdOrderByCreatedAtAsc(r.getId()).stream().filter(o -> o.getStatus() == OfferStatus.PENDING)
                         .forEach(o -> o.setStatus(OfferStatus.DECLINED));
             }
         }
-        if (to == DeliveryStatus.DISPUTED) r.setDisputeReason(input.reason().trim());
-        r.setStatus(to);
-        record(r, input.reason() == null || input.reason().isBlank() ? "Delivery moved to " + to : input.reason().trim());
-        notifyParticipants(r, "Delivery status changed to " + to + ". Escrow is demo only.");
-        return requestDto(r);
+    }
+
+    @Transactional
+    public void completeVerifiedDelivery(UUID id) {
+        DeliveryRequest r = lockRequest(id);
+        permit(admin() || (SecurityUtils.currentUser().role() == Role.AGENT && carrier(r)));
+        require(r.getSender() != null && r.isDeliveryCodeRequired() && r.getStatus() == DeliveryStatus.ARRIVED,
+                "Only arrived code-protected bookings can be completed with a delivery code");
+        var confirmation = confirmations.findById(id).orElseThrow(() -> new BadRequestException("Delivery code not verified"));
+        require(confirmation.getConfirmedAt() != null && actorId().equals(confirmation.getConfirmedBy()), "Delivery code not verified");
+        boolean stripeTest = r.getEscrowStatus() == EscrowStatus.STRIPE_TEST_HELD;
+        closeEscrow(r, DeliveryStatus.COMPLETED);
+        r.setStatus(DeliveryStatus.DELIVERED);
+        record(r, "Receiver delivery code verified; package delivered");
+        r.setStatus(DeliveryStatus.COMPLETED);
+        record(r, "Delivery completed using receiver code. Test/demo release only; no real payout");
+        if (!stripeTest) agentCommissions.recordCompletedDelivery(r);
+        notifyParticipants(r, "Receiver code confirmed delivery. Booking completed; test/demo release only, no real payout.");
     }
 
     @Transactional
     public RequestDto rate(UUID id, int rating) {
-        permit(SecurityUtils.currentUser().role() != Role.TRAVELER);
-        DeliveryRequest r = lockRequest(id);
-        permit(sender(r));
-        require(r.getStatus() == DeliveryStatus.COMPLETED && r.getRating() == null, "Rate a completed delivery once");
-        require(rating >= 1 && rating <= 5, "Choose a rating from 1 to 5");
-        r.setRating(rating);
-        return requestDto(r);
+        reviews.submitLegacy(id, rating);
+        return requestDto(lockRequest(id));
     }
     @Transactional
     public TravelerDto verify(UUID id, VerificationLevel level) {
@@ -461,7 +573,8 @@ public class MarketplaceService {
                 .sorted(Comparator.comparingDouble(OfferDto::score).reversed().thenComparing(OfferDto::id)).toList();
         boolean participant = sender(r) || guestOwner(r) || carrier(r) || admin();
         boolean contactsUnlocked = admin() || (r.getEscrowStatus() != EscrowStatus.NONE
-                && r.getEscrowStatus() != EscrowStatus.DEMO_REFUNDED);
+                && r.getEscrowStatus() != EscrowStatus.DEMO_REFUNDED
+                && r.getEscrowStatus() != EscrowStatus.STRIPE_TEST_REFUNDED);
         return new RequestDto(r.getId(), r.getSender() == null
                 ? r.getGuestAccount() == null ? null : r.getGuestAccount().getId() : r.getSender().getId(),
                 r.getPickupCity(), r.getDestinationCity(), r.getAvailableFrom(),
@@ -480,7 +593,9 @@ public class MarketplaceService {
                 r.getSender() == null, r.getProductPhoto() != null,
                 admin() && r.getConvertedShipment() != null ? r.getConvertedShipment().getId() : null,
                 admin() && r.getConvertedShipment() != null ? r.getConvertedShipment().getTrackingNumber() : null,
-                r.isAdminApproved());
+                r.isAdminApproved(), PackageDetails.items(r),
+                admin() || sender(r) || (carrier(r) && contactsUnlocked) ? PackageDetails.receiver(r) : null,
+                r.getAcceptedOffer() != null && shipmentRequests.existsByAcceptedOfferId(r.getAcceptedOffer().getId()));
     }
 
     @Transactional(readOnly = true)

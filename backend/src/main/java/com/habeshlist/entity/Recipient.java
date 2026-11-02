@@ -15,10 +15,12 @@ public class Recipient {
 
     @Column(nullable = false)
     private String name;
-    @Column(nullable = false)
+    @Column(nullable = false, length = 64)
     private String phone;
-    @Column(nullable = false)
+    @Column(nullable = false, length = 128)
     private String city;
+    @Column(length = 500)
     private String address;
+    @Column(length = 1000)
     private String notes;
 }

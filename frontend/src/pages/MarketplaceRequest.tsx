@@ -6,8 +6,13 @@ import { useAuth } from '../auth/AuthContext';
 import { MarketplaceApi } from '../api/marketplace';
 import type { DeliveryStatus } from '../api/marketplace';
 import { DemoNotice, display, marketError, money, TravelerReputation, TripCard } from './Marketplace';
-import { PackageChat } from '../components/PackageChat';
+import { BookingWorkspace } from '../components/BookingWorkspace';
+import { DeliveryTimeline } from '../components/DeliveryTimeline';
 import { GuestShipmentConversion } from '../components/GuestShipmentConversion';
+import { PackageContentsSummary } from '../components/PackageItemsEditor';
+import { PackageShipmentRequests } from '../components/ShipmentRequestSummary';
+import { PackageReviews } from '../components/DeliveryReviews';
+import { DeliveryConfirmation } from '../components/DeliveryConfirmation';
 
 export function MarketplaceRequest() {
   const { id = '' } = useParams();
@@ -18,7 +23,6 @@ export function MarketplaceRequest() {
   const [price, setPrice] = useState('');
   const [message, setMessage] = useState('');
   const [reason, setReason] = useState('');
-  const [rating, setRating] = useState('5');
   const query = useQuery({ queryKey: ['marketplace', 'request', id, user?.id], queryFn: () => MarketplaceApi.request(id), refetchInterval: 10_000 });
   const r = query.data;
   const sender = r?.senderId === user?.id;
@@ -35,27 +39,31 @@ export function MarketplaceRequest() {
   const eligibleTrips = matches.data?.map(m => m.trip) ?? [];
   const selectedTrip = eligibleTrips.find(t => t.id === tripId);
   const mutation = useMutation({ mutationFn: (action: () => Promise<unknown>) => action(),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['marketplace'] }); qc.invalidateQueries({ queryKey: ['public-travel'] }); qc.invalidateQueries({ queryKey: ['public-requests'] }); toast.success('Delivery updated'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['marketplace'] }); qc.invalidateQueries({ queryKey: ['public-travel'] }); qc.invalidateQueries({ queryKey: ['public-requests'] }); qc.invalidateQueries({ queryKey: ['admin-console'] }); qc.invalidateQueries({ queryKey: ['agent'] }); toast.success('Delivery updated'); },
     onError: error => { qc.invalidateQueries({ queryKey: ['marketplace'] }); marketError(error); } });
   const act = (action: () => Promise<unknown>) => mutation.mutate(action);
   const transition = (status: DeliveryStatus) => act(() => MarketplaceApi.transition(id, status, reason || undefined));
   if (query.isPending) return <p role="status">Loading delivery request...</p>;
   if (query.isError || !r) return <p role="alert">Could not load this request. It may no longer be available to your account. <button className="underline" onClick={() => query.refetch()}>Retry</button></p>;
   const pending = r.offers.find(o => o.traveler.id === user?.id && o.status === 'PENDING');
+  const workspace = !r.guestRequest && !!r.acceptedOfferId && (sender || carrier || admin);
   return <div className="space-y-5 max-w-5xl mx-auto">
     <Link to="/marketplace" className="underline">Back to marketplace</Link>
-    <h1 className="text-3xl font-bold">{r.pickupCity} &rarr; {r.destinationCity}</h1><DemoNotice />
-    <section className="card space-y-3">
+    <h1 className="text-3xl font-bold">{r.pickupCity} &rarr; {r.destinationCity}</h1>
+    {r.targetedShipment ? <p role="note" className="rounded-xl bg-amber-50 p-4">Stripe test payments only. No real money or carrier payouts.</p> : <DemoNotice />}
+    <section id="package-overview" className="card space-y-3">
       <h2 className="text-xl font-bold">Delivery request &middot; {r.convertedShipmentId ? 'CONVERTED TO SHIPMENT' : display(r.status)}</h2>
       <p className="font-semibold">{r.adminApproved ? 'Admin approved' : 'Awaiting admin approval'} &middot; Traveler access is read-only.</p>
       {admin && <button className="btn btn-brand" disabled={mutation.isPending}
         onClick={() => act(() => MarketplaceApi.setApproval(id, !r.adminApproved))}>
         {r.adminApproved ? 'Remove traveler approval' : 'Approve for traveler viewing'}
       </button>}
-      {readOnlyTraveler && <p role="note">You can view admin-approved requests only. Offers, request management and sending chat messages are temporarily disabled for travelers. Contact an administrator to coordinate.</p>}
-      <p>{display(r.itemType)} &middot; {r.weightKg} kg &middot; Offered {money(r.offeredPrice)}</p>
+      {readOnlyTraveler && <p role="note">You can view admin-approved requests only. Offers, request management and sending chat messages are temporarily disabled for travelers.
+        Post-delivery reviews are the only exception; use <Link className="underline" to="/my-reviews">My reviews</Link> after completion. Contact an administrator to coordinate.</p>}
+      <p>{r.items && r.items.length > 1 ? `${r.items.length} items` : display(r.itemType)} &middot; {r.weightKg} kg &middot; Offered {money(r.offeredPrice)}</p>
       <p>Available {r.availableFrom} &middot; Deadline {r.deadline}</p>
       <p className="break-words">{r.description}</p>
+      {r.items && r.items.length > 0 && <PackageContentsSummary items={r.items} receiver={r.receiver} />}
       {r.guestRequest && <p className="rounded-lg bg-blue-50 p-3 text-sm">Admin-managed sender request. An administrator handles offers and contacts the sender directly. Newly created senders can view their own request but cannot change offers or processing. Package chat is not available for these requests.</p>}
       {r.hasProductPhoto && <div>
         <h3 className="font-semibold">Product photo</h3>
@@ -63,20 +71,22 @@ export function MarketplaceRequest() {
         {photo.isError && <p role="alert">Could not load product photo. <button className="underline" onClick={() => photo.refetch()}>Retry</button></p>}
         {photo.data && <img src={photo.data} alt="Product for this delivery request" className="max-h-80 max-w-full rounded-lg object-contain" />}
       </div>}
-      <p>Demo escrow: {display(r.escrowStatus)}{r.escrowAmount != null && <> &middot; {money(r.escrowAmount)}</>}</p>
+      <p>{r.targetedShipment ? 'Stripe test booking' : 'Demo escrow'}: {display(r.escrowStatus)}{r.escrowAmount != null && <> &middot; Package amount {money(r.escrowAmount)}</>}</p>
+      {sender && r.targetedShipment && r.status !== 'MATCHED' && <Link className="underline" to={`/marketplace/requests/${id}/payment`}>View test payment summary</Link>}
       {r.disputeReason && <p className="text-red-700 break-words">Dispute: {r.disputeReason}</p>}
       {r.senderContact && <p className="text-sm break-words">Sender: {r.senderContact.name} &middot; {r.senderContact.email} {r.senderContact.phone}</p>}
       {!r.senderContact && r.senderName && <p className="text-sm break-words">Sender: {r.senderName}</p>}
       {r.travelerContact && <p className="text-sm break-words">Traveler / agent: {r.travelerContact.name} &middot; {r.travelerContact.email} {r.travelerContact.phone}</p>}
-      {!r.guestRequest && !r.travelerContact && <p className="text-sm text-ink-500">Participant names unlock when an offer is accepted. Email and phone details unlock for the selected participants after demo escrow funding.</p>}
+      {!r.guestRequest && !r.travelerContact && <p className="text-sm text-ink-500">Participant names unlock when an offer is accepted. Email and phone details unlock for the selected participants after {r.targetedShipment ? 'verified Stripe test payment' : 'demo escrow funding'}.</p>}
     </section>
     {admin && r.guestRequest && <GuestShipmentConversion key={r.id} request={r} />}
-    {!r.guestRequest && r.acceptedOfferId && (sender || carrier || admin) && <PackageChat key={`${id}:${user?.id}`} requestId={id} closed={r.status === 'CANCELLED' || r.status === 'COMPLETED'} />}
+    {!r.guestRequest && (sender || admin || canOffer) && <PackageShipmentRequests packageId={id} />}
+    {workspace && <BookingWorkspace key={`workspace:${id}:${user?.id}`} request={r} />}
     {r.status === 'REQUESTED' && canOffer && !pending && <form className="card space-y-4" onSubmit={e => { e.preventDefault(); if (selectedTrip) act(() => MarketplaceApi.offer(id, selectedTrip.id, Number(price), message)); }}>
       <h2 className="text-xl font-bold">Send an offer</h2>
       {matches.isPending && <p role="status">Checking your trips for a match...</p>}
       {matches.isError && <p role="alert">Could not check your trips. <button type="button" className="underline" onClick={() => matches.refetch()}>Retry</button></p>}
-      {matches.isSuccess && eligibleTrips.length === 0 && <p role="status">None of your trips match this request. Pickup locations must match by name or share the DC/Maryland/Northern Virginia region. Destination names must match (ignoring case and extra spaces), departure must be on or after {r.availableFrom}, arrival by {r.deadline}, and the trip must allow {display(r.itemType)} with at least {r.weightKg} kg available. <Link className="underline" to="/traveler">Post a matching trip</Link>.</p>}
+      {matches.isSuccess && eligibleTrips.length === 0 && <p role="status">None of your trips match this request. Pickup locations must match by name or share the DC/Maryland/Northern Virginia region. Destination names must match (ignoring case and extra spaces), departure must be on or after {r.availableFrom}, arrival by {r.deadline}, and the trip must allow {r.items && r.items.length > 1 ? 'every package item category' : display(r.itemType)} with at least {r.weightKg} kg available. <Link className="underline" to="/traveler">Post a matching trip</Link>.</p>}
       <label className="label">Your compatible trip<select className="input" required value={selectedTrip?.id ?? ''} onChange={e => setTripId(e.target.value)}><option value="">Select a compatible trip</option>
         {eligibleTrips.map(t => <option key={t.id} value={t.id}>{t.origin} to {t.destination} - departs {t.departureDate} - arrives {t.expectedArrivalDate ?? t.departureDate} - {t.availableKg} kg</option>)}</select></label>
       <label className="label">Your price (USD)<input type="number" className="input" required min="0.01" max="99999999.99" step="0.01" value={price} onChange={e => setPrice(e.target.value)} /></label>
@@ -103,36 +113,37 @@ export function MarketplaceRequest() {
     </section>}
     {!readOnlyTraveler && ((sender && !r.guestRequest) || carrier || admin) && !r.convertedShipmentId && <section className="card space-y-4">
       <h2 className="text-xl font-bold">Delivery actions</h2>
-      {managesSender && r.status === 'MATCHED' && <button className="btn btn-brand" disabled={mutation.isPending} onClick={() => act(() => MarketplaceApi.fund(id))}>Simulate escrow funding {money(accepted?.price ?? r.offeredPrice)} - no real payment</button>}
+      {managesSender && r.status === 'MATCHED' && (r.targetedShipment
+        ? <div className="space-y-3"><p role="note">Targeted request accepted. Capacity is reserved. Only Stripe test payment is available; no real funds or payouts.</p>
+          {sender && <Link className="btn btn-primary" to={`/marketplace/requests/${id}/payment`}>Open Stripe test payment</Link>}</div>
+        : <button className="btn btn-brand" disabled={mutation.isPending} onClick={() => act(() => MarketplaceApi.fund(id))}>Simulate escrow funding {money(accepted?.price ?? r.offeredPrice)} - no real payment</button>)}
       <div className="flex flex-wrap gap-2">
         {(carrier || admin) && r.status === 'PAID_ESCROW' && <button className="btn btn-primary" disabled={mutation.isPending} onClick={() => transition('PICKED_UP')}>Mark picked up</button>}
         {(carrier || admin) && r.status === 'PICKED_UP' && <button className="btn btn-primary" disabled={mutation.isPending} onClick={() => transition('IN_TRANSIT')}>Mark in transit</button>}
-        {(carrier || admin) && r.status === 'IN_TRANSIT' && <button className="btn btn-primary" disabled={mutation.isPending} onClick={() => transition('DELIVERED')}>Mark delivered</button>}
-        {(sender || admin) && r.status === 'DELIVERED' && <button className="btn btn-brand" disabled={mutation.isPending} onClick={() => transition('COMPLETED')}>Confirm receipt and release demo escrow</button>}
-        {['REQUESTED', 'MATCHED', 'PAID_ESCROW'].includes(r.status) && <button className="btn btn-ghost" disabled={mutation.isPending} onClick={() => transition('CANCELLED')}>Cancel delivery{r.status === 'PAID_ESCROW' ? ' and simulate refund' : ''}</button>}
+        {(carrier || admin) && r.status === 'IN_TRANSIT' && <button className="btn btn-primary" disabled={mutation.isPending} onClick={() => transition('ARRIVED')}>Mark arrived</button>}
+        {r.guestRequest && (carrier || admin) && r.status === 'ARRIVED' && <button className="btn btn-primary" disabled={mutation.isPending} onClick={() => transition('DELIVERED')}>Mark delivered</button>}
+        {(sender || admin) && r.status === 'DELIVERED' && <button className="btn btn-brand" disabled={mutation.isPending} onClick={() => transition('COMPLETED')}>{r.targetedShipment ? 'Confirm test delivery (no payout)' : 'Confirm receipt and release demo escrow'}</button>}
+        {['REQUESTED', 'MATCHED', 'PAID_ESCROW'].includes(r.status) && <button className="btn btn-ghost" disabled={mutation.isPending} onClick={() => transition('CANCELLED')}>Cancel delivery{r.targetedShipment ? ' and cancel/refund test payment' : r.status === 'PAID_ESCROW' ? ' and simulate refund' : ''}</button>}
       </div>
-      {(['PAID_ESCROW', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED'].includes(r.status) || (admin && r.status === 'DISPUTED')) && <>
+      {(['PAID_ESCROW', 'PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'DELIVERED'].includes(r.status) || (admin && r.status === 'DISPUTED')) && <>
         <label className="label">{r.status === 'DISPUTED' ? 'Resolution reason' : 'Dispute reason'}<textarea className="input" maxLength={1000} value={reason} onChange={e => setReason(e.target.value)} /></label>
         {r.status !== 'DISPUTED' ? <button className="btn btn-ghost text-red-700" disabled={!reason.trim() || mutation.isPending} onClick={() => transition('DISPUTED')}>Open dispute and freeze demo escrow</button>
           : <div className="flex flex-wrap gap-2"><button className="btn btn-brand" disabled={!reason.trim() || mutation.isPending} onClick={() => transition('COMPLETED')}>Resolve: release demo escrow</button>
             <button className="btn btn-ghost" disabled={!reason.trim() || mutation.isPending} onClick={() => transition('CANCELLED')}>Resolve: refund demo escrow</button></div>}
       </>}
       {r.status === 'DISPUTED' && !admin && <p>Demo escrow is frozen until an administrator resolves the dispute.</p>}
-      {sender && r.status === 'COMPLETED' && r.rating == null && <div className="flex flex-wrap gap-2 items-end">
-        <label className="label">Rate your traveler<select className="input" value={rating} onChange={e => setRating(e.target.value)}>{[5, 4, 3, 2, 1].map(n => <option key={n} value={n}>{n} / 5</option>)}</select></label>
-        <button className="btn btn-brand" disabled={mutation.isPending} onClick={() => act(() => MarketplaceApi.rate(id, Number(rating)))}>Submit rating</button>
-      </div>}
       {r.rating != null && <p>Traveler rating: {r.rating}/5</p>}
     </section>}
+    {!r.guestRequest && r.acceptedOfferId && (sender || carrier || admin) && <DeliveryConfirmation key={`confirmation:${id}:${user?.id}`} request={r} />}
+    {!r.guestRequest && (sender || carrier || admin) && <PackageReviews packageId={id} />}
     {((sender && !r.guestRequest) || admin) && r.status === 'REQUESTED' && <section className="space-y-4">
       <h2 className="text-xl font-bold">Suggested traveler matches</h2>
       {matches.isPending && <p role="status">Finding compatible trips...</p>}
       {matches.isError && <p role="alert">Could not load matches. <button className="underline" onClick={() => matches.refetch()}>Retry</button></p>}
       {matches.data?.length === 0 && <p>No matching trips yet. New trips are checked as they are posted.</p>}
-      {matches.data?.map(m => <div key={m.trip.id} className="space-y-1"><TripCard trip={m.trip} /><p className="text-sm">Match score {m.score.toFixed(2)} &middot; {money(m.price)} {m.request.offers.some(o => o.tripId === m.trip.id && o.status === 'PENDING') ? 'offered' : 'request price (no offer yet)'}</p></div>)}
+      {matches.data?.map(m => <div key={m.trip.id} className="space-y-1"><TripCard trip={m.trip} /><p className="text-sm">Match score {m.score.toFixed(2)} &middot; {money(m.price)} {m.request.offers.some(o => o.tripId === m.trip.id && o.status === 'PENDING') ? 'offered' : 'request price (no offer yet)'}</p>
+        {sender && <Link className="btn btn-primary" to={`/shipment-request/${m.trip.id}?package=${id}`}>Request shipment for this package</Link>}</div>)}
     </section>}
-    {r.timeline.length > 0 && <section className="card space-y-3"><h2 className="text-xl font-bold">Delivery timeline</h2>
-      <ol className="space-y-3">{r.timeline.map((event, index) => <li key={index} className="text-sm break-words"><strong>{display(event.status)}</strong> &middot; {new Date(event.createdAt).toLocaleString()}<p>{event.description}</p></li>)}</ol>
-    </section>}
+    {!workspace && r.timeline.length > 0 && <div className="card"><DeliveryTimeline request={r} /></div>}
   </div>;
 }

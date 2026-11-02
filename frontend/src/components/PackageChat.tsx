@@ -29,7 +29,7 @@ export function PackageChat({ requestId, closed }: { requestId: string; closed: 
     },
     onError: error => { qc.invalidateQueries({ queryKey: key }); marketError(error); },
   });
-  const messages = query.data?.pages.flatMap(page => page.messages).slice().reverse() ?? [];
+  const messages = query.isSuccess ? query.data.pages.flatMap(page => page.messages).slice().reverse() : [];
   const latestId = messages.at(-1)?.id;
   useEffect(() => {
     if (followLatest.current && history.current) history.current.scrollTop = history.current.scrollHeight;
@@ -37,14 +37,14 @@ export function PackageChat({ requestId, closed }: { requestId: string; closed: 
   const writable = !closed && user?.role !== 'ADMIN' && user?.role !== 'TRAVELER' && query.data?.pages[0].writable && !query.isError;
   return <section className="card space-y-4" aria-labelledby="package-chat-title">
     <h2 id="package-chat-title" className="text-xl font-bold">Package chat</h2>
-    <p className="text-sm text-ink-600">Only this package's sender and selected agent can send messages for now. Matched travelers can read existing chat on approved requests only. Administrators can review the conversation. Chat opens after offer acceptance, before escrow funding; anything you send is visible immediately.</p>
+    <p className="text-sm text-ink-600">Chat opens only after confirmed payment (Stripe test payment or demo escrow). Only this package's sender and selected agent can send messages for now. Matched travelers can read existing chat on approved requests only. Administrators can review the conversation. Messages are visible immediately.</p>
     {user?.role === 'ADMIN' && <p className="text-sm font-semibold">Administrator review &middot; Read-only</p>}
     {user?.role === 'TRAVELER' && <p className="text-sm font-semibold">Traveler access is temporarily read-only. Contact an administrator to coordinate.</p>}
     {closed && <p className="text-sm font-semibold">This delivery is closed. Chat history is read-only.</p>}
     {query.isPending && <p role="status">Loading package chat...</p>}
     {query.isError && <p role="alert">Could not load package chat. You may no longer have access. <button className="underline" onClick={() => query.refetch()}>Retry</button></p>}
     {query.hasNextPage && <button className="btn btn-ghost" disabled={query.isFetching} onClick={() => query.fetchNextPage()}>Load earlier messages</button>}
-    {query.isSuccess && messages.length === 0 && <p>No messages yet. Start the conversation about this package.</p>}
+    {query.isSuccess && messages.length === 0 && <p>{writable ? 'No messages yet. Start the conversation about this package.' : 'No messages have been recorded for this package.'}</p>}
     <ol ref={history} aria-label="Package messages" className="max-h-96 overflow-y-auto space-y-3" onScroll={event => {
       const list = event.currentTarget;
       followLatest.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
@@ -57,7 +57,7 @@ export function PackageChat({ requestId, closed }: { requestId: string; closed: 
         <p className="whitespace-pre-wrap break-words mt-2 text-sm">{message.body}</p>
       </li>)}
     </ol>
-    {writable && <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (body.trim()) send.mutate(); }}>
+    {writable && <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (body.trim() && !send.isPending) send.mutate(); }}>
       <label htmlFor="package-message" className="label">Message about this package</label>
       <textarea id="package-message" className="input" required maxLength={2000} rows={3} disabled={send.isPending} value={body} onChange={event => setBody(event.target.value)} />
       <div className="flex flex-wrap justify-between gap-2 items-center">

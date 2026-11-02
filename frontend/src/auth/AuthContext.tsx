@@ -4,6 +4,7 @@ import { isAxiosError } from 'axios';
 import { toast } from 'sonner';
 import { AuthApi } from '../api/endpoints';
 import type { AuthResponse, RegisterRequest, User } from '../types';
+import type { MarketRequestInput, MarketTripInput } from '../api/marketplace';
 
 interface AuthState {
   user: User | null;
@@ -12,6 +13,8 @@ interface AuthState {
   loginWithTemporaryPassword: (email: string, password: string) => Promise<User>;
   temporaryPassword: string | null;
   register: (data: RegisterRequest) => Promise<User>;
+  registerSender: (data: Omit<RegisterRequest, 'role'> & { packageDetails: MarketRequestInput }) => Promise<string>;
+  registerTraveler: (data: Omit<RegisterRequest, 'role'> & { tripDetails: MarketTripInput; termsAccepted: boolean }) => Promise<string>;
   logout: () => void;
 }
 
@@ -68,9 +71,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authenticate(await AuthApi.login(email, password), password), [authenticate]);
   const register = useCallback(async (data: RegisterRequest) =>
     authenticate(await AuthApi.register(data)), [authenticate]);
+  const registerSender = useCallback(async (data: Omit<RegisterRequest, 'role'> & { packageDetails: MarketRequestInput }) => {
+    const result = await AuthApi.registerSender(data);
+    authenticate(result.auth);
+    return result.requestId;
+  }, [authenticate]);
+  const registerTraveler = useCallback(async (data: Omit<RegisterRequest, 'role'> & { tripDetails: MarketTripInput; termsAccepted: boolean }) => {
+    const result = await AuthApi.registerTraveler(data);
+    authenticate(result.auth);
+    return result.tripId;
+  }, [authenticate]);
 
-  const value = useMemo(() => ({ user, initializing, login, loginWithTemporaryPassword, temporaryPassword, register, logout }),
-    [user, initializing, login, loginWithTemporaryPassword, temporaryPassword, register, logout]);
+  const value = useMemo(() => ({ user, initializing, login, loginWithTemporaryPassword, temporaryPassword, register, registerSender, registerTraveler, logout }),
+    [user, initializing, login, loginWithTemporaryPassword, temporaryPassword, register, registerSender, registerTraveler, logout]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

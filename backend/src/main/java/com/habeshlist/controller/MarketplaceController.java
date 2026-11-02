@@ -12,6 +12,7 @@ public class MarketplaceController {
     private final MarketplaceService service;
     public MarketplaceController(MarketplaceService service) { this.service = service; }
     @GetMapping("/trips") public List<TripDto> trips() { return service.listTrips(); }
+    @GetMapping("/trips/{id}") public TripDto trip(@PathVariable UUID id) { return service.getTrip(id); }
     @PostMapping("/trips") public TripDto trip(@Valid @RequestBody TripInput input) { return service.createTrip(input); }
     @GetMapping("/requests") public List<RequestDto> requests() { return service.listRequests(); }
     @PostMapping("/requests") public RequestDto request(@Valid @RequestBody RequestInput input) { return service.createRequest(input); }

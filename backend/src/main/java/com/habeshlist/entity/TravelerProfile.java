@@ -24,4 +24,7 @@ public class TravelerProfile {
     private com.habeshlist.entity.enums.MarketplaceTypes.VerificationLevel marketplaceVerification =
             com.habeshlist.entity.enums.MarketplaceTypes.VerificationLevel.UNVERIFIED;
     private String notes;
+    private java.time.Instant termsAcceptedAt;
+    @Column(length = 32)
+    private String termsVersion;
 }

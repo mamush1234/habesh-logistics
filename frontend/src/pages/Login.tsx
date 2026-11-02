@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { isAxiosError } from 'axios';
 
 export function Login() {
   const { login } = useAuth();
@@ -20,8 +21,13 @@ export function Login() {
       const u = await login(email, password);
       toast.success(`Welcome, ${u.firstName}`);
       navigate(u.mustChangePassword ? '/account' : next, { replace: true });
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message || 'Invalid credentials');
+    } catch (err: unknown) {
+      const status = isAxiosError(err) ? err.response?.status : undefined;
+      const message: unknown = isAxiosError(err) ? err.response?.data?.message : undefined;
+      toast.error(status === undefined || status >= 500
+        ? 'Could not reach the sign-in service. Please try again shortly.'
+        : typeof message === 'string' && message.trim() ? message
+          : status === 401 ? 'Invalid credentials' : 'Could not sign in. Please try again.');
     } finally {
       setLoading(false);
     }

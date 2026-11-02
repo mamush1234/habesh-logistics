@@ -31,6 +31,9 @@ class MarketplaceIntegrationTest {
     @Autowired DeliveryMessageRepository chatMessages;
     @Autowired DeliveryOfferRepository deliveryOffers;
     @Autowired PackageNotificationRepository packageNotifications;
+    @Autowired ShipmentRequestRepository shipmentRequests;
+    @Autowired com.habeshlist.admin.PlatformSettingsRepository platformSettings;
+    @Autowired com.habeshlist.service.ShipmentRequestExpiryJob shipmentExpiry;
     @Autowired com.habeshlist.service.DataSeeder seeder;
     private final String origin = "Origin-" + UUID.randomUUID();
     private final String destination = "Destination-" + UUID.randomUUID();
@@ -99,7 +102,8 @@ class MarketplaceIntegrationTest {
     private String newAgentCarrier() throws Exception {
         String email = UUID.randomUUID() + "@example.com";
         ok("POST", "/api/admin/users", admin(), Map.of("email", email,
-                "password", "New-agent-password-2026", "firstName", "Second", "lastName", "Agent", "role", "AGENT"));
+                "password", "New-agent-password-2026", "firstName", com.habeshlist.util.CodeGenerator.randomToken(16),
+                "lastName", "Agent", "role", "AGENT"));
         return login(email, "New-agent-password-2026");
     }
     private Map<String, Object> tripInput() {
@@ -114,6 +118,407 @@ class MarketplaceIntegrationTest {
                 "weightKg", 4, "offeredPrice", 50));
     }
     private JsonNode request(String token) throws Exception { return ok("POST", base + "/requests", token, requestInput()); }
+    private JsonNode pricedTrip(String token) throws Exception {
+        if (!platformSettings.existsById(com.habeshlist.admin.PlatformSettings.SINGLETON_ID))
+            platformSettings.save(com.habeshlist.admin.PlatformSettings.builder()
+                    .id(com.habeshlist.admin.PlatformSettings.SINGLETON_ID)
+                    .platformFeePercent(new java.math.BigDecimal("10.00"))
+                    .agentCommissionPercent(new java.math.BigDecimal("10.00"))
+                    .feePayer(com.habeshlist.admin.PlatformSettings.FeePayer.SENDER)
+                    .updatedAt(java.time.Instant.now()).build());
+        var input = tripInput();
+        input.put("itemPrices", List.of(
+                Map.of("category", "CLOTHING", "price", 3.25, "unit", "PER_KG"),
+                Map.of("category", "DOCUMENTS", "price", 10, "unit", "PER_ITEM")));
+        return ok("POST", base + "/trips", token, input);
+    }
+    private String quotePath(JsonNode p, JsonNode t) {
+        return base + "/shipment-requests/quote?packageId=" + p.get("id").asText() + "&tripId=" + t.get("id").asText();
+    }
+    private Map<String, Object> shipmentInput(JsonNode quote) {
+        return new HashMap<>(Map.of("packageId", quote.get("packageId").asText(), "tripId", quote.get("tripId").asText(),
+                "quoteKey", quote.get("quoteKey").asText(), "message", "Please review this package"));
+    }
+
+    private JsonNode targeted(String sender, String carrier) throws Exception {
+        JsonNode p = request(sender), trip = pricedTrip(carrier);
+        return ok("POST", base + "/shipment-requests", sender,
+                shipmentInput(ok("GET", quotePath(p, trip), sender, null)));
+    }
+
+    private String decisionPath(JsonNode r) {
+        return base + "/shipment-requests/" + r.get("id").asText() + "/decision";
+    }
+
+    private Map<String, Object> decision(JsonNode r, String action) {
+        return new HashMap<>(Map.of("action", action, "quoteKey", r.get("quote").get("quoteKey").asText()));
+    }
+
+    @Test
+    void targetedAgentAcceptanceReservesOnceScopesInboxAndBlocksDemoFunding() throws Exception {
+        String s = sender(), t = agentCarrier(), other = newAgentCarrier(), a = admin();
+        JsonNode r = targeted(s, t);
+        assertFalse(r.get("canReview").asBoolean());
+        JsonNode inbox = ok("GET", base + "/shipment-requests/inbox", t, null);
+        JsonNode own = null;
+        for (JsonNode row : inbox) if (row.get("id").equals(r.get("id"))) own = row;
+        assertNotNull(own);
+        assertTrue(own.get("canReview").asBoolean());
+        assertFalse(ok("GET", base + "/shipment-requests/inbox", other, null).findValues("id").contains(r.get("id")));
+        assertTrue(ok("GET", base + "/shipment-requests/inbox", a, null).findValues("id").contains(r.get("id")));
+        call("POST", decisionPath(r), s, decision(r, "ACCEPT")).andExpect(status().isForbidden());
+        call("POST", decisionPath(r), other, decision(r, "ACCEPT")).andExpect(status().isForbidden());
+        JsonNode accepted = ok("POST", decisionPath(r), t, decision(r, "ACCEPT"));
+        assertEquals("ACCEPTED", accepted.get("status").asText());
+        assertNotNull(accepted.get("decidedAt"));
+        UUID packageId = UUID.fromString(r.get("packageId").asText());
+        UUID tripId = UUID.fromString(r.get("tripId").asText());
+        JsonNode p = ok("GET", base + "/requests/" + packageId, s, null);
+        assertEquals("MATCHED", p.get("status").asText());
+        assertTrue(p.get("targetedShipment").asBoolean());
+        assertTrue(p.get("travelerContact").isNull());
+        assertEquals("NONE", p.get("escrowStatus").asText());
+        assertEquals(4, trips.findById(tripId).orElseThrow().getReservedKg().intValueExact());
+        assertNull(shipmentRequests.findById(UUID.fromString(r.get("id").asText())).orElseThrow().getPendingPackageId());
+        call("POST", decisionPath(r), t, decision(r, "ACCEPT")).andExpect(status().isBadRequest());
+        assertEquals(4, trips.findById(tripId).orElseThrow().getReservedKg().intValueExact());
+        call("POST", base + "/requests/" + packageId + "/demo-escrow", s, null).andExpect(status().isBadRequest());
+        ok("PUT", base + "/requests/" + packageId + "/status", s, Map.of("status", "CANCELLED"));
+        assertEquals(0, trips.findById(tripId).orElseThrow().getReservedKg().signum());
+    }
+
+    @Test
+    void targetedTravelerRequestsCanOnlyBeManagedByAdminWithoutReenablingTravelerActions() throws Exception {
+        String s = sender(), t = login("traveler@example.com", "Traveler@123"), agent = agentCarrier(), a = admin();
+        JsonNode r = targeted(s, t);
+        call("GET", base + "/shipment-requests/inbox", t, null).andExpect(status().isForbidden());
+        for (String action : List.of("ACCEPT", "DECLINE", "PROPOSE_PRICE")) {
+            var input = decision(r, action);
+            input.put("proposedPrice", 20);
+            call("POST", decisionPath(r), t, input).andExpect(status().isForbidden());
+            call("POST", decisionPath(r), agent, input).andExpect(status().isForbidden());
+        }
+        JsonNode accepted = ok("POST", decisionPath(r), a, decision(r, "ACCEPT"));
+        assertEquals("ACCEPTED", accepted.get("status").asText());
+        JsonNode p = ok("GET", base + "/requests/" + r.get("packageId").asText(), s, null);
+        assertEquals("MATCHED", p.get("status").asText());
+        assertTrue(p.get("targetedShipment").asBoolean());
+        assertTrue(p.get("travelerContact").isNull());
+        call("POST", base + "/requests/" + r.get("packageId").asText() + "/demo-escrow", t, null)
+                .andExpect(status().isForbidden());
+        call("PUT", base + "/requests/" + r.get("packageId").asText() + "/status", t, Map.of("status", "PICKED_UP"))
+                .andExpect(status().isForbidden());
+        assertEquals(4, trips.findById(UUID.fromString(r.get("tripId").asText())).orElseThrow().getReservedKg().intValueExact());
+    }
+
+    @Test
+    void targetedPriceProposalsRequireLatestSenderConsentAndKeepOriginalExpiryAndFeeSnapshot() throws Exception {
+        String s = sender(), t = agentCarrier(), a = admin();
+        JsonNode r = targeted(s, t);
+        JsonNode original = r.get("quote").deepCopy();
+        var propose = decision(r, "PROPOSE_PRICE");
+        propose.put("proposedPrice", 20);
+        JsonNode revised = ok("POST", decisionPath(r), t, propose);
+        assertEquals("PENDING", revised.get("status").asText());
+        assertEquals(r.get("expiresAt"), revised.get("expiresAt"));
+        assertEquals(original, revised.get("quote"));
+        assertEquals(20, revised.get("proposedQuote").get("packageAmount").asDouble());
+        assertEquals(22, revised.get("proposedQuote").get("total").asDouble());
+        assertEquals(0, trips.findById(UUID.fromString(r.get("tripId").asText())).orElseThrow().getReservedKg().signum());
+        call("POST", decisionPath(r), t, decision(r, "ACCEPT")).andExpect(status().isBadRequest());
+        var confirm = new HashMap<String, Object>(Map.of("action", "CONFIRM_PRICE",
+                "quoteKey", revised.get("proposedQuote").get("quoteKey").asText()));
+        call("POST", decisionPath(r), t, confirm).andExpect(status().isForbidden());
+        call("POST", decisionPath(r), a, confirm).andExpect(status().isForbidden());
+        propose.put("proposedPrice", 25);
+        JsonNode latest = ok("POST", decisionPath(r), t, propose);
+        call("POST", decisionPath(r), s, confirm).andExpect(status().isBadRequest());
+        platformSettings.findById(com.habeshlist.admin.PlatformSettings.SINGLETON_ID).orElseThrow()
+                .setPlatformFeePercent(new java.math.BigDecimal("50"));
+        confirm.put("quoteKey", latest.get("proposedQuote").get("quoteKey").asText());
+        JsonNode accepted = ok("POST", decisionPath(r), s, confirm);
+        assertEquals("ACCEPTED", accepted.get("status").asText());
+        assertEquals(27.5, accepted.get("proposedQuote").get("total").asDouble());
+        assertEquals(10, accepted.get("proposedQuote").get("platformFeePercent").asDouble());
+        assertEquals(original, accepted.get("quote"));
+        var p = packagesForTargeted(r);
+        assertEquals(25, p.getAcceptedOffer().getPrice().doubleValue());
+        assertEquals("MATCHED", p.getStatus().name());
+        assertEquals(4, trips.findById(UUID.fromString(r.get("tripId").asText())).orElseThrow().getReservedKg().intValueExact());
+    }
+
+    private com.habeshlist.entity.DeliveryRequest packagesForTargeted(JsonNode r) {
+        return requests.findById(UUID.fromString(r.get("packageId").asText())).orElseThrow();
+    }
+
+    @Test
+    void targetedDeclineRejectAndExpiredDecisionReleasePendingSlotWithoutReservingCapacity() throws Exception {
+        String s = sender(), t = agentCarrier();
+        JsonNode r = targeted(s, t);
+        JsonNode declined = ok("POST", decisionPath(r), t, decision(r, "DECLINE"));
+        assertEquals("DECLINED", declined.get("status").asText());
+        assertEquals("REQUESTED", packagesForTargeted(r).getStatus().name());
+        var input = new HashMap<String, Object>(Map.of("packageId", r.get("packageId").asText(), "tripId", r.get("tripId").asText(),
+                "quoteKey", r.get("quote").get("quoteKey").asText()));
+        JsonNode second = ok("POST", base + "/shipment-requests", s, input);
+        var proposal = decision(second, "PROPOSE_PRICE"); proposal.put("proposedPrice", 30);
+        JsonNode proposed = ok("POST", decisionPath(second), t, proposal);
+        JsonNode rejected = ok("POST", decisionPath(second), s, Map.of("action", "REJECT_PRICE",
+                "quoteKey", proposed.get("proposedQuote").get("quoteKey").asText()));
+        assertEquals("DECLINED", rejected.get("status").asText());
+        JsonNode third = ok("POST", base + "/shipment-requests", s, input);
+        var stored = shipmentRequests.findById(UUID.fromString(third.get("id").asText())).orElseThrow();
+        stored.setCreatedAt(java.time.Instant.now().minusSeconds(7200));
+        stored.setExpiresAt(java.time.Instant.now().minusSeconds(3600));
+        JsonNode expired = ok("POST", decisionPath(third), t, decision(third, "ACCEPT"));
+        assertEquals("EXPIRED", expired.get("status").asText());
+        assertNull(stored.getPendingPackageId());
+        assertEquals("REQUESTED", packagesForTargeted(r).getStatus().name());
+        assertEquals(0, trips.findById(UUID.fromString(r.get("tripId").asText())).orElseThrow().getReservedKg().signum());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void concurrentTargetedAcceptancesCannotOverbookSharedTrip() throws Exception {
+        String s = sender(), t = agentCarrier();
+        JsonNode trip = pricedTrip(t), p1 = request(s), p2 = request(s);
+        JsonNode r1 = ok("POST", base + "/shipment-requests", s, shipmentInput(ok("GET", quotePath(p1, trip), s, null)));
+        JsonNode r2 = ok("POST", base + "/shipment-requests", s, shipmentInput(ok("GET", quotePath(p2, trip), s, null)));
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            List<Future<Integer>> results = new ArrayList<>();
+            for (JsonNode r : List.of(r1, r2)) results.add(pool.submit(() -> {
+                ready.countDown();
+                assertTrue(start.await(10, TimeUnit.SECONDS));
+                return call("POST", decisionPath(r), t, decision(r, "ACCEPT")).andReturn().getResponse().getStatus();
+            }));
+            assertTrue(ready.await(10, TimeUnit.SECONDS)); start.countDown();
+            List<Integer> statuses = List.of(results.get(0).get(20, TimeUnit.SECONDS), results.get(1).get(20, TimeUnit.SECONDS));
+            assertEquals(1, statuses.stream().filter(code -> code == 200).count());
+            assertEquals(1, statuses.stream().filter(code -> code == 400).count());
+        }
+        assertEquals(4, trips.findById(UUID.fromString(trip.get("id").asText())).orElseThrow().getReservedKg().intValueExact());
+    }
+
+    @Test
+    void targetedShipmentRequestPricesEveryItemUsesSettingsAndPreservesLegacyOffers() throws Exception {
+        String s = sender(), t = agentCarrier();
+        JsonNode trip = pricedTrip(t);
+        var input = requestInput();
+        input.put("items", List.of(
+                Map.of("category", "CLOTHING", "weightKg", 1.15, "description", "Clothes one"),
+                Map.of("category", "CLOTHING", "weightKg", 1.15, "description", "Clothes two"),
+                Map.of("category", "DOCUMENTS", "weightKg", 0.1, "description", "Passport"),
+                Map.of("category", "DOCUMENTS", "weightKg", 0.1, "description", "Paperwork")));
+        input.put("receiver", Map.of("name", "Receiver", "phone", "+251911123456", "address", "Addis Ababa"));
+        JsonNode p = ok("POST", base + "/requests", s, input);
+        var settings = platformSettings.findById(com.habeshlist.admin.PlatformSettings.SINGLETON_ID).orElseThrow();
+        settings.setPlatformFeePercent(new java.math.BigDecimal("7.50"));
+        settings.setFeePayer(com.habeshlist.admin.PlatformSettings.FeePayer.SENDER);
+        JsonNode quote = ok("GET", quotePath(p, trip), s, null);
+        assertEquals(27.48, quote.get("packageAmount").asDouble());
+        assertEquals(4, quote.get("items").size());
+        assertEquals(3.74, quote.get("items").get(0).get("amount").asDouble());
+        assertEquals(10, quote.get("items").get(2).get("amount").asDouble());
+        assertEquals(2.06, quote.get("platformFee").asDouble());
+        assertEquals(29.54, quote.get("total").asDouble());
+        settings.setFeePayer(com.habeshlist.admin.PlatformSettings.FeePayer.TRAVELER);
+        JsonNode carrierPaid = ok("GET", quotePath(p, trip), s, null);
+        assertEquals(27.48, carrierPaid.get("total").asDouble());
+        assertEquals(25.42, carrierPaid.get("travelerPayout").asDouble());
+        settings.setFeePayer(com.habeshlist.admin.PlatformSettings.FeePayer.SPLIT);
+        settings.setPlatformFeePercent(new java.math.BigDecimal("0.04"));
+        JsonNode split = ok("GET", quotePath(p, trip), s, null);
+        assertEquals(0.01, split.get("platformFee").asDouble());
+        assertEquals(0.01, split.get("travelerFee").asDouble());
+        assertEquals(0, split.get("senderFee").asDouble());
+        call("POST", base + "/shipment-requests", s, shipmentInput(quote)).andExpect(status().isBadRequest());
+        JsonNode sent = ok("POST", base + "/shipment-requests", s, shipmentInput(split));
+        assertEquals("PENDING", sent.get("status").asText());
+        assertEquals(split, sent.get("quote"));
+        assertFalse(sent.get("adminManaged").asBoolean());
+        assertEquals(java.time.Duration.ofHours(1), java.time.Duration.between(
+                java.time.Instant.parse(sent.get("createdAt").asText()), java.time.Instant.parse(sent.get("expiresAt").asText())));
+        assertEquals(sent.get("id"), ok("POST", base + "/shipment-requests", s, shipmentInput(split)).get("id"));
+        assertEquals(1, ok("GET", base + "/shipment-requests?packageId=" + p.get("id").asText(), t, null).size());
+        var storedTrip = trips.findById(UUID.fromString(trip.get("id").asText())).orElseThrow();
+        assertEquals(0, storedTrip.getReservedKg().signum());
+        JsonNode unchanged = ok("GET", path(p), s, null);
+        assertEquals("REQUESTED", unchanged.get("status").asText());
+        assertTrue(unchanged.get("acceptedOfferId").isNull());
+        assertEquals("NONE", unchanged.get("escrowStatus").asText());
+        call("POST", path(p) + "/demo-escrow", s, null).andExpect(status().isBadRequest());
+        JsonNode offer = offer(t, p, trip, 40);
+        ok("POST", path(p) + "/offers/" + offer.get("id").asText() + "/accept", s, null);
+        JsonNode history = ok("GET", base + "/shipment-requests?packageId=" + p.get("id").asText(), s, null);
+        assertEquals("EXPIRED", history.get(0).get("status").asText());
+        assertEquals(split, history.get(0).get("quote"));
+    }
+
+    @Test
+    void targetedRequestsScopeOwnersRouteTravelerTripsToAdminAndExpireWithoutReservingSpace() throws Exception {
+        String s = sender(), a = admin(), t = agentCarrier(), otherAgent = newAgentCarrier();
+        String traveler = login("traveler@example.com", "Traveler@123");
+        JsonNode trip = pricedTrip(traveler), p = request(s);
+        JsonNode quote = ok("GET", quotePath(p, trip), s, null);
+        for (String token : List.of(t, traveler, a))
+            call("POST", base + "/shipment-requests", token, shipmentInput(quote)).andExpect(status().isForbidden());
+        call("GET", quotePath(p, trip), null, null).andExpect(status().isUnauthorized());
+        JsonNode sent = ok("POST", base + "/shipment-requests", s, shipmentInput(quote));
+        assertTrue(sent.get("adminManaged").asBoolean());
+        String list = base + "/shipment-requests?packageId=" + p.get("id").asText();
+        assertEquals(1, ok("GET", list, a, null).size());
+        assertEquals(0, ok("GET", list, otherAgent, null).size());
+        call("GET", list, traveler, null).andExpect(status().isForbidden());
+        assertTrue(ok("GET", "/api/package-queue/notifications", a, null).toString().contains("Admin review is required"));
+        assertFalse(ok("GET", "/api/package-queue/notifications", traveler, null).toString().contains("targeted shipment request"));
+        JsonNode otherTrip = pricedTrip(t);
+        JsonNode otherQuote = ok("GET", quotePath(p, otherTrip), s, null);
+        call("POST", base + "/shipment-requests", s, shipmentInput(otherQuote)).andExpect(status().isBadRequest());
+        var stored = shipmentRequests.findById(UUID.fromString(sent.get("id").asText())).orElseThrow();
+        java.time.Instant boundary = stored.getExpiresAt();
+        shipmentRequests.expirePending(boundary.minusMillis(1), LocalDate.now());
+        assertEquals("PENDING", shipmentRequests.findById(stored.getId()).orElseThrow().getStatus().name());
+        shipmentRequests.expirePending(boundary, LocalDate.now());
+        assertEquals("EXPIRED", shipmentRequests.findById(stored.getId()).orElseThrow().getStatus().name());
+        assertNull(shipmentRequests.findById(stored.getId()).orElseThrow().getPendingPackageId());
+        // A fresh quote after expiry can target a different trip, without reusing an old pending slot.
+        JsonNode freshQuote = ok("GET", quotePath(p, otherTrip), s, null);
+        JsonNode replacement = ok("POST", base + "/shipment-requests", s, shipmentInput(freshQuote));
+        assertNotEquals(sent.get("id"), replacement.get("id"));
+        var replacementRow = shipmentRequests.findById(UUID.fromString(replacement.get("id").asText())).orElseThrow();
+        replacementRow.setCreatedAt(java.time.Instant.now().minusSeconds(7200));
+        replacementRow.setExpiresAt(java.time.Instant.now().minusSeconds(3600));
+        shipmentRequests.flush();
+        shipmentExpiry.expire();
+        assertEquals("EXPIRED", shipmentRequests.findById(replacementRow.getId()).orElseThrow().getStatus().name());
+        assertEquals(0, trips.findById(UUID.fromString(trip.get("id").asText())).orElseThrow().getReservedKg().signum());
+    }
+
+    @Test
+    void targetedQuotesRejectPrivateIncompatibleUnpricedAndChangedPackages() throws Exception {
+        String s = sender(), t = agentCarrier();
+        JsonNode trip = pricedTrip(t), p = request(s);
+        JsonNode otherSender = ok("POST", "/api/auth/register", null, Map.of("email", UUID.randomUUID() + "@example.com",
+                "password", "Sender-password-2026", "firstName", "Other", "lastName", "Sender", "role", "SENDER"));
+        String other = otherSender.get("token").asText();
+        call("GET", quotePath(p, trip), other, null).andExpect(status().isForbidden());
+        JsonNode quote = ok("GET", quotePath(p, trip), s, null);
+        call("POST", base + "/shipment-requests", other, shipmentInput(quote)).andExpect(status().isForbidden());
+        call("GET", base + "/shipment-requests?packageId=" + p.get("id").asText(), other, null).andExpect(status().isForbidden());
+        JsonNode legacy = trip(t);
+        call("GET", quotePath(p, legacy), s, null).andExpect(status().isBadRequest());
+        var storedTrip = trips.findById(UUID.fromString(trip.get("id").asText())).orElseThrow();
+        storedTrip.getItemPrices().stream().filter(price -> price.getCategory() == ItemType.CLOTHING)
+                .findFirst().orElseThrow().setPrice(new java.math.BigDecimal("9.00"));
+        call("POST", base + "/shipment-requests", s, shipmentInput(quote)).andExpect(status().isBadRequest());
+        storedTrip.setReservedKg(storedTrip.getCapacityKg());
+        call("GET", quotePath(p, trip), s, null).andExpect(status().isBadRequest());
+        storedTrip.setReservedKg(java.math.BigDecimal.ZERO);
+        storedTrip.setDestination("Not the package destination");
+        call("GET", quotePath(p, trip), s, null).andExpect(status().isBadRequest());
+        storedTrip.setDestination(destination);
+        storedTrip.setExpectedArrivalDate(LocalDate.now().plusDays(20));
+        call("GET", quotePath(p, trip), s, null).andExpect(status().isBadRequest());
+        storedTrip.setExpectedArrivalDate(LocalDate.now().plusDays(4));
+        storedTrip.getBlockedItems().add(com.habeshlist.entity.enums.MarketplaceTypes.ItemType.CLOTHING);
+        call("GET", quotePath(p, trip), s, null).andExpect(status().isBadRequest());
+        users.findByEmailIgnoreCase("sender@example.com").orElseThrow().setRole(com.habeshlist.entity.enums.Role.TRAVELER);
+        String formerSender = login("sender@example.com", "Sender@123");
+        call("GET", base + "/shipment-requests?packageId=" + p.get("id").asText(), formerSender, null)
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void concurrentTargetedRequestRetriesCreateOnePendingRowAndOneNotification() throws Exception {
+        String s = sender(), t = agentCarrier();
+        JsonNode p = request(s), trip = pricedTrip(t);
+        Map<String, Object> input = shipmentInput(ok("GET", quotePath(p, trip), s, null));
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            List<Future<JsonNode>> results = new ArrayList<>();
+            for (int i = 0; i < 2; i++) results.add(pool.submit(() -> {
+                ready.countDown();
+                assertTrue(start.await(10, TimeUnit.SECONDS));
+                return ok("POST", base + "/shipment-requests", s, input);
+            }));
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            assertEquals(results.get(0).get(20, TimeUnit.SECONDS).get("id"), results.get(1).get(20, TimeUnit.SECONDS).get("id"));
+        }
+        assertEquals(1, shipmentRequests.findByPackageRequestIdOrderByCreatedAtDesc(UUID.fromString(p.get("id").asText())).size());
+        int notices = 0;
+        for (JsonNode notice : ok("GET", "/api/package-queue/notifications", s, null))
+            if (notice.get("requestId").equals(p.get("id")) && notice.get("message").asText()
+                    .equals("Shipment request sent. Check the package for its status. It expires in one hour.")) notices++;
+        assertEquals(1, notices);
+        assertEquals(0, trips.findById(UUID.fromString(trip.get("id").asText())).orElseThrow().getReservedKg().signum());
+    }
+    @Test
+    void signedInTripPersistsPricesAndOptionalDetailsWhileLegacyTripsRemainUnpriced() throws Exception {
+        String carrier = agentCarrier();
+        JsonNode legacy = trip(carrier);
+        assertTrue(legacy.get("itemPrices").isEmpty());
+        assertTrue(legacy.get("handoffLocation").isNull());
+        var input = tripInput();
+        input.put("handoffLocation", " Airport public meeting point ");
+        input.put("notes", " Carry-on items only ");
+        input.put("itemPrices", List.of(
+                Map.of("category", "CLOTHING", "price", 0.01, "unit", "PER_KG"),
+                Map.of("category", "DOCUMENTS", "price", 99999999.99, "unit", "PER_ITEM")));
+        JsonNode saved = ok("POST", base + "/trips", carrier, input);
+        assertEquals("Airport public meeting point", saved.get("handoffLocation").asText());
+        assertEquals("Carry-on items only", saved.get("notes").asText());
+        JsonNode reloaded = null;
+        for (JsonNode row : ok("GET", base + "/trips", carrier, null))
+            if (row.get("id").equals(saved.get("id"))) reloaded = row;
+        assertNotNull(reloaded);
+        assertEquals(saved.get("itemPrices"), reloaded.get("itemPrices"));
+        assertEquals("DOCUMENTS", reloaded.get("itemPrices").get(0).get("category").asText());
+        assertEquals(99999999.99, reloaded.get("itemPrices").get(0).get("price").asDouble());
+        assertEquals("CLOTHING", reloaded.get("itemPrices").get(1).get("category").asText());
+        assertEquals(0.01, reloaded.get("itemPrices").get(1).get("price").asDouble());
+        input.put("itemPrices", List.of(Map.of("category", "CLOTHING", "price", 5, "unit", "PER_KG")));
+        long before = trips.count();
+        call("POST", base + "/trips", carrier, input).andExpect(status().isBadRequest());
+        assertEquals(before, trips.count());
+    }
+    @Test
+    void matchesAllItemCategoriesReservesTotalWeightAndKeepsReceiverPrivateUntilFunding() throws Exception {
+        String s = sender(), carrier = agentCarrier(), other = newAgentCarrier(), a = admin();
+        var input = requestInput();
+        input.put("items", List.of(Map.of("category", "CLOTHING", "weightKg", 2, "description", "Shirts"),
+                Map.of("category", "LAPTOP", "weightKg", 2.5, "description", "Laptop")));
+        input.put("receiver", Map.of("name", "Private receiver", "phone", "+251911234567", "address", "Bole, Addis Ababa"));
+        input.put("weightKg", 0.1);
+        JsonNode r = ok("POST", base + "/requests", s, input);
+        assertEquals(4.5, r.get("weightKg").asDouble());
+        JsonNode unsupported = trip(carrier);
+        call("POST", path(r) + "/offers", carrier, Map.of("tripId", unsupported.get("id").asText(), "price", 40))
+                .andExpect(status().isBadRequest());
+        assertEquals(0, ok("GET", path(r) + "/matches", s, null).size());
+        var tripInput = tripInput();
+        tripInput.put("allowedItems", List.of("CLOTHING", "LAPTOP"));
+        JsonNode supported = ok("POST", base + "/trips", carrier, tripInput);
+        assertEquals(1, ok("GET", path(r) + "/matches", s, null).size());
+        assertTrue(ok("GET", path(r), carrier, null).get("receiver").isNull());
+        assertEquals("Private receiver", ok("GET", path(r), a, null).get("receiver").get("name").asText());
+        ok("PUT", path(r) + "/approval", a, Map.of("approved", true));
+        assertTrue(ok("GET", path(r), login("traveler@example.com", "Traveler@123"), null).get("receiver").isNull());
+        assertFalse(ok("GET", "/api/public/requests", null, null).toString().contains("Private receiver"));
+        accept(s, r, offer(carrier, r, supported, 40));
+        var reservedTrip = trips.findById(UUID.fromString(supported.get("id").asText())).orElseThrow();
+        assertEquals(4.5, reservedTrip.getReservedKg().doubleValue());
+        assertEquals(0.5, reservedTrip.getCapacityKg().subtract(reservedTrip.getReservedKg()).doubleValue());
+        assertTrue(ok("GET", path(r), carrier, null).get("receiver").isNull());
+        ok("POST", path(r) + "/demo-escrow", s, null);
+        assertEquals("Private receiver", ok("GET", path(r), carrier, null).get("receiver").get("name").asText());
+        call("GET", path(r), other, null).andExpect(status().isForbidden());
+        assertTrue(ok("GET", path(r), login("traveler@example.com", "Traveler@123"), null).get("receiver").isNull());
+    }
     private String path(JsonNode request) { return base + "/requests/" + request.get("id").asText(); }
     private JsonNode offer(String token, JsonNode request, JsonNode trip, int price) throws Exception {
         JsonNode result = ok("POST", path(request) + "/offers", token, Map.of("tripId", trip.get("id").asText(), "price", price));
@@ -124,6 +529,11 @@ class MarketplaceIntegrationTest {
     }
     private JsonNode move(String token, JsonNode r, String status) throws Exception {
         return ok("PUT", path(r) + "/status", token, Map.of("status", status));
+    }
+    private JsonNode confirmDelivery(String sender, String verifier, JsonNode request) throws Exception {
+        String code = ok("POST", path(request) + "/delivery-confirmation/code", sender, null).get("code").asText();
+        ok("POST", path(request) + "/delivery-confirmation/verify", verifier, Map.of("code", code));
+        return ok("GET", path(request), sender, null);
     }
     private JsonNode matched(String sender, String traveler, JsonNode trip) throws Exception {
         JsonNode r = request(sender);
@@ -201,7 +611,7 @@ class MarketplaceIntegrationTest {
             call("POST", path + "/demo-escrow", t, null).andExpect(status().isForbidden());
             call("POST", path + "/rating", t, Map.of("rating", 5)).andExpect(status().isForbidden());
             call("POST", path + "/messages", t, Map.of("body", "Disabled")).andExpect(status().isForbidden());
-            for (String status : List.of("PICKED_UP", "IN_TRANSIT", "DELIVERED", "COMPLETED", "CANCELLED", "DISPUTED"))
+            for (String status : List.of("PICKED_UP", "IN_TRANSIT", "ARRIVED", "DELIVERED", "COMPLETED", "CANCELLED", "DISPUTED"))
                 call("PUT", path + "/status", t, Map.of("status", status, "reason", "Disabled")).andExpect(status().isForbidden());
         }
         call("POST", path + "/offers/" + oldOffer.getId() + "/accept", s, null).andExpect(status().isBadRequest());
@@ -292,7 +702,8 @@ class MarketplaceIntegrationTest {
                 published.add(row.path("id").asText());
                 Set<String> fields = new HashSet<>();
                 row.fieldNames().forEachRemaining(fields::add);
-                assertEquals(Set.of("id", "origin", "destination", "departureDate", "availableCapacityKg", "createdAt"), fields);
+                assertEquals(Set.of("id", "origin", "destination", "departureDate", "availableCapacityKg", "createdAt",
+                        "expectedArrivalDate", "rating", "ratingCount", "verification", "allowedItems", "itemPrices"), fields);
             }
         }
         Collections.reverse(ids);
@@ -347,7 +758,7 @@ class MarketplaceIntegrationTest {
     }
 
     @Test
-    void packageChatUnlocksOnlyForSelectedParticipantsAndAdminsBeforeFunding() throws Exception {
+    void packageChatUnlocksOnlyForSelectedParticipantsAndAdminsAfterFunding() throws Exception {
         String s = sender(), t = agentCarrier(), other = newAgentCarrier(), a = admin();
         String otherSender = login("sender2@example.com", "Sender@123");
         String agent = newAgentCarrier();
@@ -361,9 +772,14 @@ class MarketplaceIntegrationTest {
         offer(other, r, trip(other), 45);
         call("GET", chat, t, null).andExpect(status().isForbidden());
         accept(s, r, selected);
+        for (String token : List.of(s, t, a)) {
+            call("GET", chat, token, null).andExpect(status().isForbidden());
+            call("POST", chat, token, Map.of("body", "Not paid yet")).andExpect(status().isForbidden());
+        }
+        assertTrue(ok("GET", path(r), t, null).get("senderContact").isNull());
+        ok("POST", path(r) + "/demo-escrow", s, null);
         assertTrue(ok("GET", chat, s, null).get("writable").asBoolean());
         assertFalse(ok("GET", chat, a, null).get("writable").asBoolean());
-        assertTrue(ok("GET", path(r), t, null).get("senderContact").isNull());
         JsonNode first = ok("POST", chat, s, Map.of("body", "  Package ready for pickup  "));
         assertEquals("Package ready for pickup", first.get("body").asText());
         assertEquals("SENDER", first.get("authorRole").asText());
@@ -394,6 +810,7 @@ class MarketplaceIntegrationTest {
     void chatValidatesMessagesAndPaginatesWithoutCrossPackageLeaks() throws Exception {
         String s = sender(), t = agentCarrier();
         JsonNode r = matched(s, t, trip(t));
+        ok("POST", path(r) + "/demo-escrow", s, null);
         String chat = path(r) + "/messages";
         for (String body : List.of("", " \n\t", "x".repeat(2001)))
             call("POST", chat, s, Map.of("body", body)).andExpect(status().isBadRequest());
@@ -411,6 +828,7 @@ class MarketplaceIntegrationTest {
         assertTrue(earlier.get("nextBefore").isNull());
         JsonNode separate = request(s);
         JsonNode separateMatch = accept(s, separate, offer(t, separate, trip(t), 40));
+        ok("POST", path(separateMatch) + "/demo-escrow", s, null);
         assertEquals(0, ok("GET", path(separateMatch) + "/messages", s, null).get("messages").size());
     }
 
@@ -419,6 +837,7 @@ class MarketplaceIntegrationTest {
     void simultaneousChatMessagesPersistInSequenceOrder() throws Exception {
         String s = sender(), t = agentCarrier();
         JsonNode r = matched(s, t, trip(t));
+        ok("POST", path(r) + "/demo-escrow", s, null);
         String chat = path(r) + "/messages";
         var ready = new CountDownLatch(2);
         var start = new CountDownLatch(1);
@@ -457,14 +876,33 @@ class MarketplaceIntegrationTest {
         assertEquals("ID_VERIFIED", ok("PUT", verifyPath, a, Map.of("level", "ID_VERIFIED")).get("verification").asText());
         accept(s, r, offer(agent, r, agentTrip, 40));
         String chat = path(r) + "/messages";
+        ok("POST", path(r) + "/demo-escrow", s, null);
         assertEquals("AGENT", ok("POST", chat, agent, Map.of("body", "Agent pickup arranged")).get("authorRole").asText());
         ok("POST", chat, s, Map.of("body", "Thank you"));
-        ok("POST", path(r) + "/demo-escrow", s, null);
-        move(agent, r, "PICKED_UP"); move(agent, r, "IN_TRANSIT"); move(agent, r, "DELIVERED"); move(s, r, "COMPLETED");
+        move(agent, r, "PICKED_UP"); move(agent, r, "IN_TRANSIT"); move(agent, r, "ARRIVED"); confirmDelivery(s, agent, r);
         assertEquals(2, ok("GET", chat, a, null).get("messages").size());
         assertFalse(ok("GET", chat, agent, null).get("writable").asBoolean());
         call("POST", chat, agent, Map.of("body", "Too late")).andExpect(status().isBadRequest());
         ok("POST", path(r) + "/rating", s, Map.of("rating", 5));
+    }
+
+    @Test
+    void cancellingBeforeFundingNeverUnlocksChat() throws Exception {
+        String s = sender(), t = agentCarrier(), a = admin();
+        JsonNode r = matched(s, t, trip(t));
+        UUID id = UUID.fromString(r.get("id").asText());
+        chatMessages.saveAndFlush(com.habeshlist.entity.DeliveryMessage.builder()
+                .request(requests.findById(id).orElseThrow())
+                .author(users.findByEmailIgnoreCase("sender@example.com").orElseThrow())
+                .body("Historical pre-funding message").createdAt(java.time.Instant.now()).sequenceNumber(1).build());
+        call("GET", path(r) + "/messages", s, null).andExpect(status().isForbidden());
+        move(s, r, "CANCELLED");
+        for (String token : List.of(s, t, a)) {
+            call("GET", path(r) + "/messages", token, null).andExpect(status().isForbidden());
+            call("POST", path(r) + "/messages", token, Map.of("body", "Never funded")).andExpect(status().isForbidden());
+        }
+        assertEquals(1, chatMessages.findByRequestIdAndSequenceNumberLessThanOrderBySequenceNumberDesc(
+                id, Long.MAX_VALUE, org.springframework.data.domain.PageRequest.of(0, 50)).size());
     }
 
     @Test
@@ -484,12 +922,12 @@ class MarketplaceIntegrationTest {
         assertEquals(42, r.get("escrowAmount").asInt());
         assertEquals("sender@example.com", ok("GET", path(r), t, null).get("senderContact").get("email").asText());
         call("PUT", path(r) + "/status", s, Map.of("status", "PICKED_UP")).andExpect(status().isForbidden());
-        move(t, r, "PICKED_UP"); move(t, r, "IN_TRANSIT"); move(t, r, "DELIVERED");
+        move(t, r, "PICKED_UP"); move(t, r, "IN_TRANSIT"); move(t, r, "ARRIVED");
+        r = confirmDelivery(s, t, r);
         call("PUT", path(r) + "/status", t, Map.of("status", "COMPLETED")).andExpect(status().isForbidden());
-        r = move(s, r, "COMPLETED");
         assertEquals("DEMO_RELEASED", r.get("escrowStatus").asText());
-        assertEquals(7, r.get("timeline").size());
-        assertEquals(List.of("REQUESTED", "MATCHED", "PAID_ESCROW", "PICKED_UP", "IN_TRANSIT", "DELIVERED", "COMPLETED"),
+        assertEquals(8, r.get("timeline").size());
+        assertEquals(List.of("REQUESTED", "MATCHED", "PAID_ESCROW", "PICKED_UP", "IN_TRANSIT", "ARRIVED", "DELIVERED", "COMPLETED"),
                 r.get("timeline").findValues("status").stream().map(JsonNode::asText).toList());
         ok("POST", path(r) + "/rating", s, Map.of("rating", 4));
         call("POST", path(r) + "/rating", s, Map.of("rating", 5)).andExpect(status().isBadRequest());
@@ -497,6 +935,72 @@ class MarketplaceIntegrationTest {
                 .filter(value -> value.get("id").asText().equals(trip.get("traveler").get("id").asText())).findFirst().orElseThrow();
         assertEquals(4, postedTrip.get("rating").asDouble());
         assertEquals(1, postedTrip.get("ratingCount").asInt());
+    }
+
+    @Test
+    void arrivalRequiresTransitAndSelectedCarrierOrAdminAndRemainsActiveUntilDelivery() throws Exception {
+        String s = sender(), t = agentCarrier(), a = admin(), outsider = newAgentCarrier();
+        JsonNode r = matched(s, t, trip(t));
+        String statusPath = path(r) + "/status";
+        call("PUT", statusPath, t, Map.of("status", "ARRIVED")).andExpect(status().isBadRequest());
+        ok("POST", path(r) + "/demo-escrow", s, null);
+        call("PUT", statusPath, a, Map.of("status", "ARRIVED")).andExpect(status().isBadRequest());
+        move(t, r, "PICKED_UP");
+        call("PUT", statusPath, t, Map.of("status", "ARRIVED")).andExpect(status().isBadRequest());
+        move(t, r, "IN_TRANSIT");
+        call("PUT", statusPath, t, Map.of("status", "DELIVERED")).andExpect(status().isBadRequest());
+        for (String token : List.of(s, outsider, login("traveler@example.com", "Traveler@123")))
+            call("PUT", statusPath, token, Map.of("status", "ARRIVED")).andExpect(status().isForbidden());
+        long activeBefore = ok("GET", "/api/admin/console/overview", a, null).get("activeShipments").asLong();
+        var stored = requests.findById(UUID.fromString(r.get("id").asText())).orElseThrow();
+        var owner = users.findById(stored.getAcceptedOffer().getTraveler().getId()).orElseThrow();
+        stored.setCreatedByAgent(owner);
+        long agentActiveBefore = ok("GET", "/api/agent/dashboard", t, null).get("activeShipments").asLong();
+        JsonNode arrived = move(t, r, "ARRIVED");
+        assertEquals("ARRIVED", arrived.get("status").asText());
+        JsonNode event = arrived.get("timeline").get(arrived.get("timeline").size() - 1);
+        assertEquals("ARRIVED", event.get("status").asText());
+        assertDoesNotThrow(() -> java.time.Instant.parse(event.get("createdAt").asText()));
+        assertEquals(event, ok("GET", path(r), s, null).get("timeline").get(arrived.get("timeline").size() - 1));
+        assertEquals(activeBefore, ok("GET", "/api/admin/console/overview", a, null).get("activeShipments").asLong());
+        assertEquals(agentActiveBefore, ok("GET", "/api/agent/dashboard", t, null).get("activeShipments").asLong());
+        assertTrue(ok("GET", "/api/admin/console/requests?view=tracking&status=ARRIVED", a, null)
+                .get("items").findValues("id").contains(r.get("id")));
+        assertTrue(ok("GET", "/api/agent/packages?status=ARRIVED", t, null)
+                .get("items").findValues("id").contains(r.get("id")));
+        for (String invalid : List.of("ARRIVED", "IN_TRANSIT", "PICKED_UP", "COMPLETED", "CANCELLED"))
+            call("PUT", statusPath, invalid.equals("COMPLETED") ? s : t, Map.of("status", invalid)).andExpect(status().isBadRequest());
+        assertTrue(ok("GET", "/api/package-queue/notifications", s, null).findValues("message").stream()
+                .anyMatch(value -> value.asText().contains("status changed to ARRIVED")));
+        confirmDelivery(s, a, r);
+    }
+
+    @Test
+    void legacyDeliveredBookingsCanCompleteWithoutFabricatingArrival() throws Exception {
+        String s = sender(), t = agentCarrier();
+        JsonNode r = matched(s, t, trip(t));
+        ok("POST", path(r) + "/demo-escrow", s, null);
+        var stored = requests.findById(UUID.fromString(r.get("id").asText())).orElseThrow();
+        stored.setDeliveryCodeRequired(false);
+        stored.setStatus(DeliveryStatus.DELIVERED);
+        JsonNode completed = move(s, r, "COMPLETED");
+        assertEquals("COMPLETED", completed.get("status").asText());
+        assertFalse(completed.get("timeline").findValues("status").stream()
+                .anyMatch(value -> value.asText().equals("ARRIVED")));
+    }
+
+    @Test
+    void adminCanRecordArrivalAndResolveADisputeAfterArrival() throws Exception {
+        String s = sender(), t = agentCarrier(), a = admin();
+        JsonNode r = matched(s, t, trip(t));
+        ok("POST", path(r) + "/demo-escrow", s, null);
+        move(t, r, "PICKED_UP"); move(t, r, "IN_TRANSIT"); move(a, r, "ARRIVED");
+        JsonNode disputed = ok("PUT", path(r) + "/status", s, Map.of("status", "DISPUTED", "reason", "Handoff delayed"));
+        assertEquals("DISPUTED", disputed.get("status").asText());
+        call("PUT", path(r) + "/status", t, Map.of("status", "DELIVERED")).andExpect(status().isForbidden());
+        JsonNode resolved = ok("PUT", path(r) + "/status", a, Map.of("status", "COMPLETED", "reason", "Confirmed by both parties"));
+        assertEquals("COMPLETED", resolved.get("status").asText());
+        assertFalse(resolved.get("timeline").findValues("status").stream().anyMatch(value -> value.asText().equals("DELIVERED")));
     }
 
     @Test
@@ -844,6 +1348,110 @@ class MarketplaceIntegrationTest {
     }
 
     @Test
+    void publicBrowseIncludesRealReputationAndPricesWithoutExposingIdentityOrFreeText() throws Exception {
+        String s = sender(), t = newAgentCarrier(), a = admin();
+        var input = tripInput();
+        input.put("handoffLocation", "PRIVATE_HANDOFF");
+        input.put("notes", "PRIVATE_NOTES");
+        input.put("itemPrices", List.of(
+                Map.of("category", "CLOTHING", "price", 3.25, "unit", "PER_KG"),
+                Map.of("category", "DOCUMENTS", "price", 10, "unit", "PER_ITEM")));
+        JsonNode trip = ok("POST", base + "/trips", t, input);
+        JsonNode unrated = null;
+        for (JsonNode row : ok("GET", "/api/public/travel", null, null))
+            if (row.get("id").equals(trip.get("id"))) unrated = row;
+        assertNotNull(unrated);
+        assertTrue(unrated.get("rating").isNull());
+        assertEquals(0, unrated.get("ratingCount").asInt());
+        assertEquals("UNVERIFIED", unrated.get("verification").asText());
+        assertEquals(date(4), unrated.get("expectedArrivalDate").asText());
+        assertEquals(2, unrated.get("allowedItems").size());
+        assertEquals(trip.get("itemPrices"), unrated.get("itemPrices"));
+        String userId = trip.get("traveler").get("id").asText();
+        for (int rating : List.of(5, 3)) {
+            JsonNode r = matched(s, t, trip);
+            var stored = requests.findById(UUID.fromString(r.get("id").asText())).orElseThrow();
+            stored.setStatus(DeliveryStatus.COMPLETED);
+            stored.setRating(rating);
+            trips.findById(UUID.fromString(trip.get("id").asText())).orElseThrow().setReservedKg(java.math.BigDecimal.ZERO);
+        }
+        for (String level : List.of("ID_VERIFIED", "FULLY_VERIFIED", "UNVERIFIED")) {
+            ok("PUT", base + "/travelers/" + userId + "/verification", a, Map.of("level", level));
+            JsonNode rated = null;
+            for (JsonNode row : ok("GET", "/api/public/travel", null, null))
+                if (row.get("id").equals(trip.get("id"))) rated = row;
+            assertNotNull(rated);
+            assertEquals(4, rated.get("rating").asDouble());
+            assertEquals(2, rated.get("ratingCount").asInt());
+            assertEquals(level, rated.get("verification").asText());
+            for (String field : List.of("name", "traveler", "travelerId", "photo", "email", "phone", "handoffLocation", "notes"))
+                assertFalse(rated.has(field), field);
+            assertFalse(rated.toString().contains(userId));
+            assertFalse(rated.toString().contains("PRIVATE_"));
+        }
+    }
+
+    @Test
+    void tripDetailsKeepPublicProjectionPrivateAndAuthenticatedVisibilityScoped() throws Exception {
+        String s = sender(), t = newAgentCarrier(), other = agentCarrier(), a = admin();
+        var input = tripInput();
+        input.put("handoffLocation", "PRIVATE_HANDOFF");
+        input.put("notes", "PRIVATE_NOTES");
+        input.put("itemPrices", List.of(
+                Map.of("category", "CLOTHING", "price", 3.25, "unit", "PER_KG"),
+                Map.of("category", "DOCUMENTS", "price", 10, "unit", "PER_ITEM")));
+        JsonNode saved = ok("POST", base + "/trips", t, input);
+        String id = saved.get("id").asText();
+        JsonNode summary = ok("GET", "/api/public/travel/" + id, null, null);
+        JsonNode listed = null;
+        for (JsonNode row : ok("GET", "/api/public/travel", null, null))
+            if (row.get("id").equals(saved.get("id"))) listed = row;
+        assertEquals(listed, summary);
+        assertFalse(summary.toString().contains("PRIVATE_"));
+        assertFalse(summary.toString().contains(saved.get("traveler").get("id").asText()));
+        for (String token : List.of(s, t, a)) {
+            JsonNode detail = ok("GET", base + "/trips/" + id, token, null);
+            assertEquals("PRIVATE_HANDOFF", detail.get("handoffLocation").asText());
+            assertEquals("PRIVATE_NOTES", detail.get("notes").asText());
+            assertEquals(saved.get("itemPrices"), detail.get("itemPrices"));
+            if (token.equals(s)) {
+                assertEquals("Private agent", detail.get("traveler").get("name").asText());
+                assertFalse(detail.get("traveler").has("email"));
+                assertFalse(detail.get("traveler").has("phone"));
+            }
+        }
+        call("GET", base + "/trips/" + id, null, null).andExpect(status().isUnauthorized());
+        call("GET", base + "/trips/" + id, other, null).andExpect(status().isForbidden());
+        call("GET", base + "/trips/" + id, login("traveler@example.com", "Traveler@123"), null)
+                .andExpect(status().isForbidden());
+        call("GET", base + "/trips/" + UUID.randomUUID(), s, null).andExpect(status().isNotFound());
+        call("GET", "/api/public/travel/not-a-uuid", null, null).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void publicTripDetailsRejectMissingFullPastAndInactiveTrips() throws Exception {
+        String t = newAgentCarrier(), s = sender();
+        JsonNode saved = trip(t);
+        UUID id = UUID.fromString(saved.get("id").asText());
+        String url = "/api/public/travel/" + id;
+        var stored = trips.findById(id).orElseThrow();
+        ok("GET", url, null, null);
+        stored.setReservedKg(stored.getCapacityKg());
+        call("GET", url, null, null).andExpect(status().isNotFound());
+        stored.setReservedKg(java.math.BigDecimal.ZERO);
+        stored.setDepartureDate(LocalDate.now().minusDays(1));
+        call("GET", url, null, null).andExpect(status().isNotFound());
+        call("GET", base + "/trips/" + id, s, null).andExpect(status().isForbidden());
+        ok("GET", base + "/trips/" + id, t, null);
+        stored.setDepartureDate(LocalDate.now());
+        ok("GET", url, null, null);
+        stored.getTraveler().setActive(false);
+        call("GET", url, null, null).andExpect(status().isNotFound());
+        call("GET", base + "/trips/" + id, s, null).andExpect(status().isForbidden());
+        call("GET", "/api/public/travel/" + UUID.randomUUID(), null, null).andExpect(status().isNotFound());
+    }
+
+    @Test
     void publicTripSummariesExcludePrivateFieldsAndUnavailableTrips() throws Exception {
         String s = sender(), t = agentCarrier();
         var input = tripInput(); input.put("capacityKg", 4);
@@ -851,7 +1459,8 @@ class MarketplaceIntegrationTest {
         JsonNode data = ok("GET", "/api/public/travel", null, null);
         assertTrue(data.findValues("id").contains(trip.get("id")));
         for (JsonNode summary : data)
-            assertEquals(Set.of("id", "origin", "destination", "departureDate", "availableCapacityKg", "createdAt"),
+            assertEquals(Set.of("id", "origin", "destination", "departureDate", "availableCapacityKg", "createdAt",
+                            "expectedArrivalDate", "rating", "ratingCount", "verification", "allowedItems", "itemPrices"),
                     om.convertValue(summary, Map.class).keySet());
         matched(s, t, trip);
         assertFalse(ok("GET", "/api/public/travel", null, null).findValues("id").contains(trip.get("id")));

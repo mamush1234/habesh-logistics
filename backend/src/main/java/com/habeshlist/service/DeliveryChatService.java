@@ -3,6 +3,7 @@ package com.habeshlist.service;
 import com.habeshlist.dto.MarketplaceDtos.*;
 import com.habeshlist.entity.*;
 import com.habeshlist.entity.enums.MarketplaceTypes.DeliveryStatus;
+import com.habeshlist.entity.enums.MarketplaceTypes.EscrowStatus;
 import com.habeshlist.entity.enums.Role;
 import com.habeshlist.exception.*;
 import com.habeshlist.repository.*;
@@ -45,6 +46,8 @@ public class DeliveryChatService {
         if (request.getAcceptedOffer() == null
                 || (!participant(request) && SecurityUtils.currentUser().role() != Role.ADMIN))
             throw new AccessDeniedException("Chat is only available to the matched participants and admins");
+        if (request.getEscrowStatus() == null || request.getEscrowStatus() == EscrowStatus.NONE)
+            throw new AccessDeniedException("Chat opens only after confirmed payment");
     }
     private boolean writable(DeliveryRequest request) {
         return request.getSender() != null && participant(request) && SecurityUtils.currentUser().role() != Role.ADMIN

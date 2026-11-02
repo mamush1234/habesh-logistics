@@ -14,6 +14,7 @@ import java.util.*;
 public class MarketTrip {
     @Id @GeneratedValue private UUID id;
     @ManyToOne(fetch = FetchType.LAZY, optional = false) private User traveler;
+    @ManyToOne(fetch = FetchType.LAZY) private User createdByAgent;
     @Column(nullable = false, length = 100) private String origin;
     @Column(nullable = false, length = 100) private String destination;
     @Column(nullable = false) private LocalDate departureDate;
@@ -28,4 +29,9 @@ public class MarketTrip {
     @Enumerated(EnumType.STRING) @Column(name = "item_type", nullable = false)
     @Builder.Default private Set<ItemType> blockedItems = new HashSet<>();
     @Column(nullable = false) private Instant createdAt;
+    @Column(length = 500) private String handoffLocation;
+    @Column(length = 1000) private String notes;
+    @OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("category ASC")
+    @Builder.Default private List<TripItemPrice> itemPrices = new ArrayList<>();
 }

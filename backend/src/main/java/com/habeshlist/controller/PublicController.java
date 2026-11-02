@@ -17,8 +17,14 @@ public class PublicController {
     }
 
     @GetMapping("/travel")
-    public java.util.List<com.habeshlist.dto.ApiDtos.PublicTravelDto> travel() {
+    public java.util.List<com.habeshlist.dto.ApiDtos.PublicMarketplaceTripDto> travel() {
         return travel.publicTrips();
+    }
+
+    @GetMapping("/travel/{id}")
+    public com.habeshlist.dto.ApiDtos.PublicMarketplaceTripDto trip(
+            @org.springframework.web.bind.annotation.PathVariable java.util.UUID id) {
+        return travel.publicTrip(id);
     }
 
     @GetMapping("/requests")

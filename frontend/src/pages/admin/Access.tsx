@@ -18,7 +18,7 @@ export function AdminAccess() {
   });
   return <div className="space-y-6">
     <h1 className="text-3xl font-bold">Account access</h1>
-    <p>Senders and travelers can sign up directly. Create agent accounts from the <Link to="/admin" className="underline">admin dashboard</Link>.</p>
+    <p>Senders and travelers can sign up directly. Create agent accounts from the <Link to="/admin/operations" className="underline">admin dashboard</Link>.</p>
     <section className="card space-y-3">
       <h2 className="text-xl font-semibold">Accounts</h2>
       <p className="text-sm text-ink-500">Disabling an account blocks login and revokes existing sessions.</p>

@@ -44,14 +44,17 @@ public class SecurityConfig {
                             org.springframework.http.HttpStatus.UNAUTHORIZED)))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(org.springframework.http.HttpMethod.POST,
-                        "/api/auth/login", "/api/auth/register",
-                        "/api/guest-requests/check", "/api/guest-requests/submit").permitAll()
+                        "/api/auth/login", "/api/auth/register", "/api/auth/register/sender", "/api/auth/register/traveler",
+                        "/api/guest-requests/check", "/api/guest-requests/submit",
+                        "/api/payments/stripe/webhook").permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.GET,
-                        "/api/public/info", "/api/public/travel", "/api/public/requests",
+                        "/api/public/info", "/api/public/travel", "/api/public/travel/*", "/api/public/requests",
                         "/api/public/requests/*/product-photo").permitAll()
                 .requestMatchers("/error").permitAll()
                 .requestMatchers("/api/shipments/guest").denyAll()
                 .requestMatchers("/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").hasRole("ADMIN")
+                .requestMatchers("/api/agent/**").hasRole("AGENT")
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

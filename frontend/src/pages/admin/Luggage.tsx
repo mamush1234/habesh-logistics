@@ -45,7 +45,7 @@ export function AdminLuggage() {
     <div className="space-y-6">
       <div className="flex flex-wrap justify-between items-center gap-3">
         <h1 className="text-3xl font-bold">Luggage consolidation</h1>
-        <Link className="btn btn-ghost" to="/admin">Back to dashboard</Link>
+        <Link className="btn btn-ghost" to="/admin/operations">Back to dashboard</Link>
       </div>
       <p className="text-ink-500">Open luggage, consolidate packages, then assign the luggage to a trip. Direct package assignment remains available on each trip.</p>
       <form className="card grid md:grid-cols-2 gap-3" data-testid="luggage-form"

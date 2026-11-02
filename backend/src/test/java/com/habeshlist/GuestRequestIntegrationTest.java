@@ -542,7 +542,7 @@ class GuestRequestIntegrationTest {
         call("POST", path + "/messages", t, Map.of("body", "Hello")).andExpect(status().isForbidden());
         assertEquals("PAID_ESCROW", ok("POST", path + "/demo-escrow", a, null).path("status").asText());
         assertTrue(ok("GET", path, t, null).path("senderContact").isNull());
-        for (String state : List.of("PICKED_UP", "IN_TRANSIT", "DELIVERED", "COMPLETED")) {
+        for (String state : List.of("PICKED_UP", "IN_TRANSIT", "ARRIVED", "DELIVERED", "COMPLETED")) {
             var response = mvc.perform(put(path + "/status").header("Authorization", "Bearer " + a)
                     .contentType(MediaType.APPLICATION_JSON).content(om.writeValueAsString(Map.of("status", state))));
             response.andExpect(status().isOk());

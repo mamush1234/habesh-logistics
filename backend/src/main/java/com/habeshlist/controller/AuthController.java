@@ -12,9 +12,26 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+    private final com.habeshlist.service.SenderOnboardingService senderOnboarding;
+    private final com.habeshlist.service.TravelerOnboardingService travelerOnboarding;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, com.habeshlist.service.SenderOnboardingService senderOnboarding,
+                          com.habeshlist.service.TravelerOnboardingService travelerOnboarding) {
         this.authService = authService;
+        this.senderOnboarding = senderOnboarding;
+        this.travelerOnboarding = travelerOnboarding;
+    }
+
+    @PostMapping("/register/traveler")
+    public ResponseEntity<com.habeshlist.dto.TravelerOnboardingDtos.Result> traveler(
+            @Valid @RequestBody com.habeshlist.dto.TravelerOnboardingDtos.Input input) {
+        return ResponseEntity.ok(travelerOnboarding.register(input));
+    }
+
+    @PostMapping("/register/sender")
+    public ResponseEntity<com.habeshlist.dto.SenderOnboardingDtos.Result> sender(
+            @Valid @RequestBody com.habeshlist.dto.SenderOnboardingDtos.Input input) {
+        return ResponseEntity.ok(senderOnboarding.register(input));
     }
 
     @PostMapping("/register")

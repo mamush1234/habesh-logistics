@@ -4,11 +4,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { toast } from 'sonner';
 import { useAuth } from '../auth/AuthContext';
-import { MarketplaceApi, deliveryStatuses, itemTypes } from '../api/marketplace';
-import type { ItemType, MarketRequest, MarketTraveler, MarketTrip, VerificationLevel } from '../api/marketplace';
-import { initialRequestForm, MarketRequestFields, today } from '../components/MarketRequestFields';
+import { PublicApi } from '../api/endpoints';
+import { MarketplaceApi, deliveryStatuses } from '../api/marketplace';
+import type { MarketRequest, MarketTraveler, MarketTrip, VerificationLevel } from '../api/marketplace';
+import { initialRequestForm, MarketRequestFields } from '../components/MarketRequestFields';
+import { initialTripForm, MarketTripFields, tripFormError, tripFormInput, TripDetailsSummary } from '../components/MarketTripFields';
+import { initialPackageContents, PackageItemsEditor, packageContentsError, packageContentsInput,
+  totalPackageWeight } from '../components/PackageItemsEditor';
 import { RequestThumbnail } from '../components/RequestThumbnail';
+import { PublicTravelerCard } from '../components/PublicTravelerCard';
 import { filterTrips, initialTripFilters, TripListFilters } from '../components/TripListFilters';
+import type { TripFilters } from '../components/TripListFilters';
 
 export const display = (value: string) => value.replaceAll('_', ' ');
 export const money = (value: number) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value);
@@ -29,7 +35,7 @@ export function RequestCard({ request, score }: { request: MarketRequest; score?
     <div className="min-w-0 space-y-3">
     <div className="flex flex-wrap justify-between gap-2"><h2 className="text-lg font-bold">{request.pickupCity} &rarr; {request.destinationCity}</h2>
       <span className="text-xs font-bold rounded-full bg-blue-100 text-blue-900 px-3 py-1">{display(request.status)}</span></div>
-    <p>{display(request.itemType)} &middot; {request.weightKg} kg &middot; Offered {money(request.offeredPrice)}</p>
+    <p>{request.items && request.items.length > 1 ? `${request.items.length} items` : display(request.itemType)} &middot; {request.weightKg} kg &middot; Offered {money(request.offeredPrice)}</p>
     <p className="text-sm">Available {request.availableFrom} &middot; Deadline {request.deadline}</p>
     <p className="text-sm font-semibold">{request.adminApproved ? 'Admin approved' : 'Awaiting admin approval'}</p>
     <p className="text-sm break-words">{request.description}</p>
@@ -42,6 +48,7 @@ export function TripCard({ trip }: { trip: MarketTrip }) {
   return <article className="card space-y-2">
     <h2 className="text-lg font-bold">{trip.origin} &rarr; {trip.destination}</h2>
     <TravelerReputation traveler={trip.traveler} />
+    <TripDetailsSummary trip={trip} />
     <p>Departure {trip.departureDate}{trip.expectedArrivalDate && <> &middot; Arrival {trip.expectedArrivalDate}</>}</p>
     <p className="text-sm text-ink-500">Posted {new Date(trip.createdAt).toLocaleDateString()}</p>
     <p>{trip.availableKg} of {trip.capacityKg} kg available</p>
@@ -56,6 +63,7 @@ export function MarketRequestForm() {
   const preferredTrip = params.get('travel');
   const trips = useQuery({ queryKey: ['marketplace', 'trips'], queryFn: MarketplaceApi.trips, enabled: !!preferredTrip });
   const [form, setForm] = useState(initialRequestForm);
+  const [contents, setContents] = useState(initialPackageContents);
   const selectedTrip = trips.data?.find(t => t.id === preferredTrip);
   const appliedTrip = useRef('');
   useEffect(() => {
@@ -66,7 +74,8 @@ export function MarketRequestForm() {
     }
   }, [selectedTrip]);
   const mutation = useMutation({
-    mutationFn: () => MarketplaceApi.createRequest({ ...form, weightKg: Number(form.weightKg), offeredPrice: Number(form.offeredPrice) }),
+    mutationFn: () => MarketplaceApi.createRequest({ ...form, ...packageContentsInput(contents),
+      itemType: contents.items[0].category, weightKg: totalPackageWeight(contents), offeredPrice: Number(form.offeredPrice) }),
     onSuccess: request => { qc.invalidateQueries({ queryKey: ['marketplace'] }); toast.success('Request posted. Awaiting admin approval for traveler visibility; agents can send offers.'); navigate(`/marketplace/requests/${request.id}`); },
     onError: marketError,
   });
@@ -75,8 +84,12 @@ export function MarketRequestForm() {
     {selectedTrip && <TripCard trip={selectedTrip} />}
     {trips.isError && <p role="alert">Could not load the selected trip. <button className="underline" onClick={() => trips.refetch()}>Retry</button></p>}
     <p className="text-sm">Agents can send offers, then you choose one. Travelers can view your request only after admin approval and cannot manage it or make offers for now. Posting does not reserve a trip. Do not include contact details in the public description.</p>
-    <form className="card grid sm:grid-cols-2 gap-4" onSubmit={e => { e.preventDefault(); mutation.mutate(); }}>
-      <MarketRequestFields form={form} onChange={setForm} />
+    <form className="card grid sm:grid-cols-2 gap-4" onSubmit={e => {
+      e.preventDefault(); const problem = packageContentsError(contents);
+      if (problem) { toast.error(problem); return; } mutation.mutate();
+    }}>
+      <MarketRequestFields hideItemType hideWeight form={form} onChange={setForm} />
+      <PackageItemsEditor value={contents} onChange={setContents} />
       <button className="btn btn-brand sm:col-span-2" disabled={mutation.isPending}>{mutation.isPending ? 'Posting...' : 'Post request'}</button>
     </form>
   </div>;
@@ -84,38 +97,25 @@ export function MarketRequestForm() {
 
 function TripForm() {
   const qc = useQueryClient();
-  const [form, setForm] = useState({ origin: '', destination: '', departureDate: '', expectedArrivalDate: '', capacityKg: '' });
-  const [allowed, setAllowed] = useState<ItemType[]>([]);
-  const [blocked, setBlocked] = useState<ItemType[]>([]);
+  const [form, setForm] = useState(initialTripForm);
   const mutation = useMutation({
-    mutationFn: () => MarketplaceApi.createTrip({ ...form, expectedArrivalDate: form.expectedArrivalDate || undefined,
-      capacityKg: Number(form.capacityKg), allowedItems: allowed, blockedItems: blocked }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['marketplace'] }); qc.invalidateQueries({ queryKey: ['public-travel'] }); toast.success('Trip posted'); setForm({ origin: '', destination: '', departureDate: '', expectedArrivalDate: '', capacityKg: '' }); },
+    mutationFn: () => MarketplaceApi.createTrip(tripFormInput(form)),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['marketplace'] }); qc.invalidateQueries({ queryKey: ['public-travel'] }); toast.success('Trip posted'); setForm(current => ({ ...initialTripForm(), allowedItems: current.allowedItems, blockedItems: current.blockedItems, prices: current.prices })); },
     onError: marketError,
   });
-  function rule(type: ItemType, value: string) {
-    setAllowed(current => [...current.filter(t => t !== type), ...(value === 'allow' ? [type] : [])]);
-    setBlocked(current => [...current.filter(t => t !== type), ...(value === 'block' ? [type] : [])]);
-  }
-  return <form className="card grid sm:grid-cols-2 gap-4" onSubmit={e => { e.preventDefault(); mutation.mutate(); }}>
+  return <form className="card grid sm:grid-cols-2 gap-4" onSubmit={e => {
+    e.preventDefault(); const problem = tripFormError(form);
+    if (problem) { toast.error(problem); return; } mutation.mutate();
+  }}>
     <h2 className="text-xl font-bold sm:col-span-2">Post a traveler trip</h2>
-    <label className="label">Origin city<input className="input" required maxLength={100} value={form.origin} onChange={e => setForm({ ...form, origin: e.target.value })} /></label>
-    <label className="label">Destination city<input className="input" required maxLength={100} value={form.destination} onChange={e => setForm({ ...form, destination: e.target.value })} /></label>
-    <label className="label">Departure date<input className="input" type="date" required min={today()} value={form.departureDate} onChange={e => setForm({ ...form, departureDate: e.target.value })} /></label>
-    <label className="label">Expected arrival (optional)<input className="input" type="date" min={form.departureDate || today()} value={form.expectedArrivalDate} onChange={e => setForm({ ...form, expectedArrivalDate: e.target.value })} /></label>
-    <label className="label">Available weight (kg)<input className="input" type="number" min="0.1" max="99999999.99" step="0.01" required value={form.capacityKg} onChange={e => setForm({ ...form, capacityKg: e.target.value })} /></label>
-    <fieldset className="sm:col-span-2 grid sm:grid-cols-2 gap-3"><legend className="font-semibold mb-2">Item rules</legend>
-      <p className="sm:col-span-2 text-sm">Only explicitly allowed categories can match. Select at least one.</p>
-      {itemTypes.map(type => <label key={type} className="label">{display(type)}<select className="input"
-        value={allowed.includes(type) ? 'allow' : blocked.includes(type) ? 'block' : ''} onChange={e => rule(type, e.target.value)}>
-        <option value="">Not accepted</option><option value="allow">Will carry</option><option value="block">Will not carry</option>
-      </select></label>)}
-    </fieldset>
-    <button className="btn btn-brand sm:col-span-2" disabled={mutation.isPending || allowed.length === 0}>{mutation.isPending ? 'Posting...' : 'Publish trip'}</button>
+    <MarketTripFields form={form} onChange={setForm} />
+    <button className="btn btn-brand sm:col-span-2" disabled={mutation.isPending || form.allowedItems.length === 0}>{mutation.isPending ? 'Posting...' : 'Publish trip'}</button>
   </form>;
 }
 
-export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tripsOnly?: boolean; myPackagesOnly?: boolean }) {
+export function Marketplace({ tripsOnly = false, myPackagesOnly = false, browseTravelers = false }: {
+  tripsOnly?: boolean; myPackagesOnly?: boolean; browseTravelers?: boolean;
+}) {
   const { user } = useAuth();
   const canPostTrip = user?.role === 'TRAVELER' || user?.role === 'AGENT';
   const canOffer = user?.role === 'AGENT';
@@ -125,18 +125,46 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
   const [search, setSearch] = useState('');
   const [tripId, setTripId] = useState('');
   const [tripFilters, setTripFilters] = useState(initialTripFilters);
-  const showRequests = myPackagesOnly || (!tripsOnly && user?.role !== 'SENDER');
+  const [params, setParams] = useSearchParams();
+  const publicTrips = useQuery({ queryKey: ['public-travel'], queryFn: PublicApi.travel, enabled: browseTravelers, refetchInterval: 60_000 });
+  const showRequests = !browseTravelers && (myPackagesOnly || (!tripsOnly && user?.role !== 'SENDER'));
   const requests = useQuery({ queryKey: ['marketplace', 'requests', user?.id], queryFn: MarketplaceApi.requests, enabled: showRequests, refetchInterval: 15_000 });
-  const trips = useQuery({ queryKey: ['marketplace', 'trips', user?.id], queryFn: MarketplaceApi.trips, enabled: !myPackagesOnly, refetchInterval: 15_000 });
+  const trips = useQuery({ queryKey: ['marketplace', 'trips', user?.id], queryFn: MarketplaceApi.trips, enabled: !myPackagesOnly && !browseTravelers, refetchInterval: 15_000 });
   const matches = useQuery({ queryKey: ['marketplace', 'matches', tripId, user?.id], queryFn: () => MarketplaceApi.tripMatches(tripId), enabled: !!tripId, refetchInterval: 15_000 });
   const verify = useMutation({ mutationFn: ({ id, level }: { id: string; level: VerificationLevel }) => MarketplaceApi.verify(id, level),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['marketplace'] }); toast.success('Verification updated'); }, onError: marketError });
   const owned = trips.data?.filter(t => t.traveler.id === user?.id) ?? [];
-  const visibleTrips = trips.data && filterTrips(canPostTrip ? owned : trips.data, tripFilters);
+  const visibleTrips = trips.data && filterTrips((canPostTrip ? owned : trips.data)
+    .filter(t => !tripFilters.verifiedOnly || t.traveler.verification !== 'UNVERIFIED'), tripFilters);
   const filtered = requests.data?.filter(r => (!myPackagesOnly || r.senderId === user?.id)
     && (!status || r.status === status)
     && (user?.role !== 'ADMIN' || !approval || r.adminApproved === (approval === 'approved'))
     && `${r.pickupCity} ${r.destinationCity} ${r.description}`.toLowerCase().includes(search.toLowerCase()));
+  if (browseTravelers) {
+    const sort = params.get('sort');
+    const filters: TripFilters = { origin: params.get('origin') ?? '', destination: params.get('destination') ?? '',
+      from: params.get('from') ?? '', to: params.get('to') ?? '',
+      verifiedOnly: params.get('verifiedOnly') === 'true',
+      sort: sort === 'newest' || sort === 'oldest' ? sort : 'departure' };
+    const results = publicTrips.data && filterTrips(publicTrips.data
+      .filter(t => !filters.verifiedOnly || t.verification !== 'UNVERIFIED'), filters);
+    return <div className="space-y-6">
+      <Link to="/" className="underline">Back to home</Link>
+      <h1 className="text-3xl font-bold">Browse Travelers</h1>
+      <p className="text-ink-500">Find an upcoming trip from the USA to Ethiopia. Public previews keep traveler identities and contact details private.</p>
+      <TripListFilters showRoute showVerified value={filters} onChange={next => {
+        const searchParams = new URLSearchParams();
+        for (const [key, value] of Object.entries(next)) if (value) searchParams.set(key, String(value));
+        setParams(searchParams);
+      }} />
+      {publicTrips.isPending && <p role="status">Finding upcoming trips...</p>}
+      {publicTrips.isError && <p role="alert">Could not load trips. <button className="underline" onClick={() => publicTrips.refetch()}>Try again</button></p>}
+      {results?.length === 0 && <p className="card">No upcoming trips match these filters. Try another route or date.</p>}
+      {results && !publicTrips.isPending && !publicTrips.isError && <p role="status">{results.length} {results.length === 1 ? 'trip' : 'trips'} found</p>}
+      <div className="grid md:grid-cols-2 gap-4">{results?.map(t => <PublicTravelerCard key={t.id} trip={t} />)}</div>
+      <DemoNotice />
+    </div>;
+  }
   return <div className="space-y-6">
     <div className="flex flex-wrap justify-between items-center gap-3"><h1 className="text-3xl font-bold">{myPackagesOnly ? 'My packages' : user?.role === 'SENDER' ? 'Traveler / agent trips' : tripsOnly ? 'My delivery trips' : canPostTrip ? 'Sender requests' : 'Delivery marketplace'}</h1>
       {user?.role === 'SENDER' && <Link to="/send" className="btn btn-brand">Post a request</Link>}
@@ -172,7 +200,7 @@ export function Marketplace({ tripsOnly = false, myPackagesOnly = false }: { tri
       <div className="space-y-4">{filtered?.map(r => <RequestCard key={r.id} request={r} />)}</div>
     </>}
     {!myPackagesOnly && <><section className="space-y-4"><h2 className="text-2xl font-bold">{canPostTrip ? 'Your posted trips' : 'Available traveler / agent trips'}</h2>
-      <TripListFilters value={tripFilters} onChange={setTripFilters} />
+      <TripListFilters showVerified={user?.role === 'SENDER'} value={tripFilters} onChange={setTripFilters} />
       {trips.isPending && <p role="status">Loading trips...</p>}
       {trips.isError && <p role="alert">Could not load trips. <button className="underline" onClick={() => trips.refetch()}>Retry</button></p>}
       {visibleTrips?.length === 0 && <p>No trips match these dates.</p>}

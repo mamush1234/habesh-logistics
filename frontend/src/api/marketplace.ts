@@ -1,8 +1,8 @@
 import { api } from './client';
 
-export const itemTypes = ['DOCUMENTS', 'CLOTHING', 'ELECTRONICS', 'MEDICINE', 'FOOD', 'OTHER'] as const;
+export const itemTypes = ['DOCUMENTS', 'CLOTHING', 'ELECTRONICS', 'MEDICINE', 'FOOD', 'OTHER', 'SHOES', 'LAPTOP', 'COSMETICS'] as const;
 export type ItemType = typeof itemTypes[number];
-export const deliveryStatuses = ['REQUESTED', 'MATCHED', 'PAID_ESCROW', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'DISPUTED'] as const;
+export const deliveryStatuses = ['DRAFT', 'REQUESTED', 'MATCHED', 'PAID_ESCROW', 'PICKED_UP', 'IN_TRANSIT', 'ARRIVED', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'DISPUTED'] as const;
 export type DeliveryStatus = typeof deliveryStatuses[number];
 export type VerificationLevel = 'UNVERIFIED' | 'ID_VERIFIED' | 'FULLY_VERIFIED';
 export interface MarketTraveler {
@@ -11,7 +11,9 @@ export interface MarketTraveler {
 export interface MarketTripInput {
   origin: string; destination: string; departureDate: string; expectedArrivalDate?: string;
   capacityKg: number; allowedItems: ItemType[]; blockedItems: ItemType[];
+  handoffLocation?: string | null; notes?: string | null; itemPrices?: TripItemPrice[];
 }
+export interface TripItemPrice { category: ItemType; price: number; unit: 'PER_KG' | 'PER_ITEM' }
 export interface MarketTrip extends MarketTripInput {
   id: string; traveler: MarketTraveler; availableKg: number; createdAt: string;
 }
@@ -22,22 +24,27 @@ export interface PublicRequest {
 export interface MarketRequestInput {
   pickupCity: string; destinationCity: string; availableFrom: string; deadline: string;
   itemType: ItemType; description: string; weightKg: number; offeredPrice: number;
+  items?: PackageItemInput[]; receiver?: PackageReceiver;
 }
+export interface PackageItemInput { category: ItemType; weightKg: number; description: string }
+export interface PackageReceiver { name: string; phone: string; address: string; notes?: string }
 export interface MarketOffer {
   id: string; tripId: string; traveler: MarketTraveler; price: number; message: string | null;
   status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'WITHDRAWN'; score: number;
 }
 export interface MarketContact { name: string; email: string; phone: string | null }
-export interface MarketRequest extends MarketRequestInput {
+export interface MarketRequest extends Omit<MarketRequestInput, 'receiver'> {
   id: string; senderId: string | null; senderName: string | null; status: DeliveryStatus;
   guestRequest: boolean; hasProductPhoto: boolean;
   adminApproved: boolean;
   convertedShipmentId: string | null; shipmentTrackingNumber: string | null;
-  escrowStatus: 'NONE' | 'DEMO_HELD' | 'DEMO_RELEASED' | 'DEMO_REFUNDED';
+  escrowStatus: 'NONE' | 'DEMO_HELD' | 'DEMO_RELEASED' | 'DEMO_REFUNDED' | 'STRIPE_TEST_HELD' | 'STRIPE_TEST_RELEASED' | 'STRIPE_TEST_REFUNDED';
   escrowAmount: number | null; acceptedOfferId: string | null; rating: number | null;
   disputeReason: string | null; offers: MarketOffer[]; createdAt: string;
   timeline: { status: DeliveryStatus; description: string; createdAt: string }[];
   senderContact: MarketContact | null; travelerContact: MarketContact | null;
+  items?: PackageItemInput[]; receiver?: PackageReceiver | null;
+  targetedShipment: boolean;
 }
 export interface MarketMatch { request: MarketRequest; trip: MarketTrip; price: number; score: number }
 export interface DeliveryMessage {
@@ -54,6 +61,7 @@ export const MarketplaceApi = {
   sendMessage: (id: string, body: string) =>
     api.post<DeliveryMessage>(`/api/marketplace/requests/${id}/messages`, { body }).then(r => r.data),
   trips: () => api.get<MarketTrip[]>('/api/marketplace/trips').then(r => r.data),
+  trip: (id: string) => api.get<MarketTrip>(`/api/marketplace/trips/${encodeURIComponent(id)}`).then(r => r.data),
   createTrip: (input: MarketTripInput) => api.post<MarketTrip>('/api/marketplace/trips', input).then(r => r.data),
   requests: () => api.get<MarketRequest[]>('/api/marketplace/requests').then(r => r.data),
   request: (id: string) => api.get<MarketRequest>(`/api/marketplace/requests/${id}`).then(r => r.data),
